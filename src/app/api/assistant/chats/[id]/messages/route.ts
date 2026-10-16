@@ -7,5 +7,5 @@ type P = { params: Promise<{ id: string }> };
 export const POST = (req: Request, { params }: P) =>
   route(async ({ userId }) => {
     const body = sendSchema.parse(await readJson(req));
-    return sendMessage(userId, (await params).id, body.content);
+    return sendMessage(userId, (await params).id, body.content, body.focusTaskId);
   })(req);

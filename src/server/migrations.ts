@@ -112,4 +112,10 @@ DROP TRIGGER IF EXISTS assistant_chats_updated_at ON assistant_chats;
 CREATE TRIGGER assistant_chats_updated_at BEFORE UPDATE ON assistant_chats FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 `,
   },
+  {
+    name: "005_assistant_proposed_note",
+    sql: `
+ALTER TABLE assistant_messages ADD COLUMN IF NOT EXISTS proposed_note JSONB;
+`,
+  },
 ];

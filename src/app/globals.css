@@ -482,6 +482,12 @@ input, textarea { font: inherit; color: inherit; }
   margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line);
   display: flex; flex-direction: column; gap: 8px;
 }
+.asst-propose-note .meta { display: inline-flex; align-items: center; gap: 6px; }
+.asst-note-preview {
+  margin: 0; padding: 10px 12px; border-radius: 10px; background: rgba(0,0,0,0.18);
+  font-family: inherit; font-size: 13px; line-height: 1.45; white-space: pre-wrap;
+  overflow-wrap: anywhere; max-height: 180px; overflow-y: auto; color: var(--ink);
+}
 .asst-propose[data-queued] { opacity: 0.72; }
 .asst-propose ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .asst-propose li {

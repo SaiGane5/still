@@ -119,6 +119,16 @@ export class NoteSession {
     if (this.status !== "conflict") this.schedule();
   }
 
+  /** Apply a server-confirmed note write (e.g. from the assistant). */
+  applyServerNote(content: string, version: number) {
+    this.content = content;
+    this.version = version;
+    this.dirty = false;
+    this.loaded = true;
+    this.drafts.remove(this.taskId);
+    this.emit("saved");
+  }
+
   private schedule() {
     this.clearTimers();
     this.timer = setTimeout(() => void this.persist(), this.debounceMs);

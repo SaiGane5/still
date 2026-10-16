@@ -18,7 +18,8 @@ const config: CapacitorConfig = {
     LocalNotifications: {
       smallIcon: "ic_stat_still",
       iconColor: "#F4F1EA",
-      sound: "alarm.wav",
+      // No default channel sound — progress updates must stay silent.
+      // Time-up uses a dedicated channel with alarm.wav (see native.ts).
     },
     StatusBar: {
       style: "DARK",

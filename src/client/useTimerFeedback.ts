@@ -3,16 +3,18 @@ import { useEffect, useRef } from "react";
 import {
   clearFocusNotification,
   ensureNativeNotificationPermission,
+  installNativeTimerActionListener,
   isNativeApp,
   notifyNativeTimeUp,
   updateFocusNotification,
+  type TimerNotificationAction,
 } from "./native";
 import { notifyTimeUp } from "./notify";
-import { playAlarm, playTick, stopAlarm, unlockAudio } from "./sounds";
+import { playAlarm, stopAlarm, unlockAudio } from "./sounds";
 
 /**
- * Tick each second while running; 5s alarm + notification + extend prompt on expiry.
- * Updates the Android ongoing notification while focusing in the Capacitor app.
+ * Alarm + notification + extend prompt on expiry only (no per-second ticks).
+ * Keeps a silent ongoing Android notification with live remaining time and pause/resume actions.
  */
 export function useTimerFeedback(opts: {
   soundEnabled: boolean;
@@ -23,40 +25,51 @@ export function useTimerFeedback(opts: {
   taskTitle: string;
   seedKey: number | null;
   onTimeUp?: () => void;
+  onNotificationAction?: (action: TimerNotificationAction) => void;
 }) {
-  const { soundEnabled, seconds, running, expired, taskId, taskTitle, seedKey, onTimeUp } = opts;
-  const prevSeconds = useRef<number | null>(null);
+  const { soundEnabled, seconds, running, expired, taskId, taskTitle, seedKey, onTimeUp, onNotificationAction } = opts;
   const alarmedFor = useRef<string | null>(null);
   const onTimeUpRef = useRef(onTimeUp);
+  const onActionRef = useRef(onNotificationAction);
   onTimeUpRef.current = onTimeUp;
+  onActionRef.current = onNotificationAction;
+  const lastPosted = useRef<{ seconds: number; running: boolean; title: string } | null>(null);
 
-  // Soft tick on each whole-second change while counting down.
   useEffect(() => {
-    if (!soundEnabled || !running || expired || !taskId) {
-      prevSeconds.current = seconds;
-      return;
-    }
-    const prev = prevSeconds.current;
-    if (prev != null && seconds < prev && seconds > 0) playTick();
-    prevSeconds.current = seconds;
-  }, [seconds, running, expired, soundEnabled, taskId]);
+    installNativeTimerActionListener();
+  }, []);
 
-  // Ongoing notification bar (native) — refresh about once per second.
   useEffect(() => {
-    if (!isNativeApp() || !taskId) {
+    const onAction = (e: Event) => {
+      const action = (e as CustomEvent<TimerNotificationAction>).detail;
+      if (action === "pause" || action === "resume") onActionRef.current?.(action);
+    };
+    window.addEventListener("still:timer-action", onAction);
+    return () => window.removeEventListener("still:timer-action", onAction);
+  }, []);
+
+  // Ongoing notification — update in place; never clear while a focus task is active.
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    if (!taskId) {
+      lastPosted.current = null;
       void clearFocusNotification();
       return;
     }
     if (expired || seconds <= 0) return;
+
+    const prev = lastPosted.current;
+    // Always refresh running clock; while paused only refresh if state/title changed.
+    if (prev && !running && prev.running === running && prev.seconds === seconds && prev.title === taskTitle) {
+      return;
+    }
+
     void ensureNativeNotificationPermission().then((ok) => {
       if (!ok) return;
+      lastPosted.current = { seconds, running, title: taskTitle };
       void updateFocusNotification({ title: taskTitle, seconds, running });
     });
   }, [taskId, taskTitle, seconds, running, expired]);
-
-  useEffect(() => () => {
-    void clearFocusNotification();
-  }, []);
 
   // One alarm + notification + extend prompt per expired task seed.
   useEffect(() => {
@@ -64,6 +77,7 @@ export function useTimerFeedback(opts: {
     const key = `${taskId}:${seedKey}`;
     if (alarmedFor.current === key) return;
     alarmedFor.current = key;
+    lastPosted.current = null;
     if (soundEnabled) {
       unlockAudio();
       playAlarm(5_000);

@@ -49,12 +49,13 @@ export function useFocusTimer(seed: Seed | null, plannedSeconds: number) {
 
   const running = snap.running;
 
-  // single interval while running
+  // Keep the clock (and native notification) fresh while a session is active —
+  // including when paused, so the shade still shows a stable remaining time.
   useEffect(() => {
-    if (!running) return;
+    if (!taskId) return;
     const id = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(id);
-  }, [running, taskId, seedKey]);
+  }, [taskId, seedKey]);
 
   // expiry
   const expiredNow = running && isExpired(snap, now);

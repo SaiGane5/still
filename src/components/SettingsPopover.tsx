@@ -106,7 +106,7 @@ export function SettingsPopover({
               }}
             />
           </label>
-          <p className="muted settings-hint">Ticks while focusing, chime and a notification when time is up.</p>
+          <p className="muted settings-hint">Alarm and notification only when the timer reaches zero.</p>
 
           {loaded && (user?.signedIn || googleEnabled) && (
             <div className="settings-account">

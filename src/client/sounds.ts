@@ -1,14 +1,12 @@
 /**
- * Timer sounds: prefers bundled files under /sounds, falls back to Web Audio synthesis.
- * Call `unlockAudio()` from a user gesture so the browser/WebView allows playback.
+ * Timer sounds: alarm only when a focus session hits zero.
+ * Call `unlockAudio()` from a user gesture so the WebView allows playback later.
  */
 
 let ctx: AudioContext | null = null;
-let tickEl: HTMLAudioElement | null = null;
 let alarmEl: HTMLAudioElement | null = null;
 let alarmStopTimer: ReturnType<typeof setTimeout> | null = null;
 
-const TICK_SRC = "/sounds/tick.mp3";
 const ALARM_SRC = "/sounds/alarm.mp3";
 const ALARM_MS = 5_000;
 
@@ -21,13 +19,8 @@ function audio(): AudioContext | null {
   return ctx;
 }
 
-function ensureElements() {
+function ensureAlarmElement() {
   if (typeof window === "undefined") return;
-  if (!tickEl) {
-    tickEl = new Audio(TICK_SRC);
-    tickEl.preload = "auto";
-    tickEl.volume = 0.35;
-  }
   if (!alarmEl) {
     alarmEl = new Audio(ALARM_SRC);
     alarmEl.preload = "auto";
@@ -36,15 +29,21 @@ function ensureElements() {
   }
 }
 
-/** Resume audio context + unlock HTMLAudio after a click / timer toggle. */
+/** Resume audio context after a click / timer toggle — no audible playback. */
 export function unlockAudio() {
-  audio();
-  ensureElements();
-  // Play+pause unlocks HTMLAudio on iOS/Android WebViews
-  void tickEl?.play().then(() => {
-    tickEl?.pause();
-    if (tickEl) tickEl.currentTime = 0;
-  }).catch(() => {});
+  const c = audio();
+  if (!c) return;
+  // Silent buffer unlocks playback policies without a tick sound.
+  try {
+    const buf = c.createBuffer(1, 1, c.sampleRate);
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    src.connect(c.destination);
+    src.start(0);
+  } catch {
+    /* ignore */
+  }
+  ensureAlarmElement();
 }
 
 function tone(c: AudioContext, freq: number, start: number, dur: number, peak = 0.06, type: OscillatorType = "sine") {
@@ -61,25 +60,9 @@ function tone(c: AudioContext, freq: number, start: number, dur: number, peak = 
   o.stop(start + dur + 0.02);
 }
 
-/** Quiet per-second tick while the focus clock is running. */
+/** @deprecated Ticks removed — only the time-up alarm should play. Kept as no-op for safety. */
 export function playTick() {
-  ensureElements();
-  if (tickEl) {
-    try {
-      tickEl.currentTime = 0;
-      void tickEl.play().catch(() => synthTick());
-      return;
-    } catch {
-      /* fall through */
-    }
-  }
-  synthTick();
-}
-
-function synthTick() {
-  const c = audio();
-  if (!c) return;
-  tone(c, 920, c.currentTime, 0.035, 0.028, "triangle");
+  /* intentionally silent */
 }
 
 /**
@@ -88,7 +71,7 @@ function synthTick() {
  */
 export function playAlarm(durationMs = ALARM_MS) {
   stopAlarm();
-  ensureElements();
+  ensureAlarmElement();
   unlockAudio();
   if (alarmEl) {
     try {

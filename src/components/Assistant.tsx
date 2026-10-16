@@ -1,9 +1,9 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, Check, Loader2, MessageCircle, Plus, Send, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, FileText, Loader2, MessageCircle, Plus, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, assistantApi } from "@/client/api";
-import type { AssistantChat, AssistantChatSummary, AssistantMessage, ProposedTask } from "@/lib/assistant";
+import type { AssistantChat, AssistantChatSummary, AssistantMessage, ProposedNote, ProposedTask } from "@/lib/assistant";
 import type { AppState } from "@/lib/types";
 
 type View = "history" | "chat";
@@ -61,7 +61,46 @@ function ProposedCard({
   );
 }
 
-export function Assistant({ onQueued }: { onQueued: (state: AppState) => void }) {
+function ProposedNoteCard({
+  note,
+  busy,
+  onConfirm,
+  onDiscard,
+}: {
+  note: ProposedNote;
+  busy: boolean;
+  onConfirm: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div className="asst-propose asst-propose-note">
+      <p className="meta">
+        <FileText size={12} strokeWidth={1.75} />
+        {note.mode === "replace" ? "Replace notes" : "Append to notes"}
+      </p>
+      <pre className="asst-note-preview">{note.content}</pre>
+      <div className="asst-propose-actions">
+        <button type="button" className="link-btn" disabled={busy} onClick={onDiscard}>
+          Discard
+        </button>
+        <button type="button" className="btn-primary asst-confirm-btn" disabled={busy} onClick={onConfirm}>
+          {busy ? <Loader2 size={16} className="asst-spin" /> : <Check size={16} strokeWidth={1.75} />}
+          Save to notes
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function Assistant({
+  focusTaskId,
+  onQueued,
+  onNoteSaved,
+}: {
+  focusTaskId?: string | null;
+  onQueued: (state: AppState) => void;
+  onNoteSaved?: (taskId: string, content: string, version: number) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>("chat");
   const [chats, setChats] = useState<AssistantChatSummary[]>([]);
@@ -120,33 +159,25 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
 
   useEffect(() => {
     if (!sending) return;
-    const id = setInterval(() => setThinkIx((i) => (i + 1) % THINKING_LINES.length), 1400);
+    const id = setInterval(() => setThinkIx((i) => (i + 1) % THINKING_LINES.length), 1600);
     return () => clearInterval(id);
   }, [sending]);
 
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    el.scrollTop = el.scrollHeight;
   }, [chat?.messages, sending, open]);
 
-  useEffect(() => {
-    if (open && view === "chat") {
-      const t = setTimeout(() => inputRef.current?.focus(), 280);
-      return () => clearTimeout(t);
-    }
-  }, [open, view, chat?.id]);
-
   const startNew = async () => {
-    setError(null);
     try {
       const created = await assistantApi.create();
-      setChats((c) => [created, ...c.filter((x) => x.id !== created.id)]);
+      setChats((list) => [created, ...list]);
       setChat(created);
       setView("chat");
-      setInput("");
+      setError(null);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Couldn’t start a chat");
+      setError(e instanceof ApiError ? e.message : "Couldn’t start chat");
     }
   };
 
@@ -175,19 +206,19 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
       role: "user",
       content: text,
       proposedTasks: null,
+      proposedNote: null,
       queued: false,
       createdAt: new Date().toISOString(),
     };
     setChat((c) => (c ? { ...c, messages: [...c.messages, optimistic] } : c));
     try {
-      const reply = await assistantApi.send(chat.id, text);
+      await assistantApi.send(chat.id, text, focusTaskId);
       const fresh = await assistantApi.get(chat.id);
       setChat(fresh);
       setChats((list) => {
         const rest = list.filter((c) => c.id !== fresh.id);
         return [{ id: fresh.id, title: fresh.title, createdAt: fresh.createdAt, updatedAt: fresh.updatedAt }, ...rest];
       });
-      void reply;
     } catch (e) {
       setChat((c) => (c ? { ...c, messages: c.messages.filter((m) => m.id !== optimistic.id) } : c));
       setInput(text);
@@ -197,18 +228,24 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
     }
   };
 
-  const confirm = async (messageId: string) => {
+  const confirmTasks = async (messageId: string) => {
     if (!chat) return;
     setConfirming(messageId);
     setError(null);
     try {
-      const res = await assistantApi.confirm(chat.id, messageId);
+      const res = await assistantApi.confirm(chat.id, messageId, {
+        applyTasks: true,
+        applyNote: false,
+        focusTaskId,
+      });
       if (res.state) onQueued(res.state);
       setChat((c) =>
         c
           ? {
               ...c,
-              messages: c.messages.map((m) => (m.id === messageId ? { ...m, queued: true } : m)),
+              messages: c.messages.map((m) =>
+                m.id === messageId ? { ...m, proposedTasks: null, queued: !m.proposedNote } : m,
+              ),
             }
           : c,
       );
@@ -219,14 +256,53 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
     }
   };
 
-  const discard = (messageId: string) => {
+  const confirmNote = async (messageId: string) => {
+    if (!chat) return;
+    setConfirming(messageId);
+    setError(null);
+    try {
+      const res = await assistantApi.confirm(chat.id, messageId, {
+        applyTasks: false,
+        applyNote: true,
+        focusTaskId,
+      });
+      if (res.note) onNoteSaved?.(res.note.taskId, res.note.content, res.note.version);
+      setChat((c) =>
+        c
+          ? {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === messageId
+                  ? { ...m, proposedNote: null, queued: !m.proposedTasks?.length }
+                  : m,
+              ),
+            }
+          : c,
+      );
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn’t save notes");
+    } finally {
+      setConfirming(null);
+    }
+  };
+
+  const discardTasks = (messageId: string) => {
     setChat((c) =>
       c
         ? {
             ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, proposedTasks: null } : m,
-            ),
+            messages: c.messages.map((m) => (m.id === messageId ? { ...m, proposedTasks: null } : m)),
+          }
+        : c,
+    );
+  };
+
+  const discardNote = (messageId: string) => {
+    setChat((c) =>
+      c
+        ? {
+            ...c,
+            messages: c.messages.map((m) => (m.id === messageId ? { ...m, proposedNote: null } : m)),
           }
         : c,
     );
@@ -327,7 +403,9 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
                   {!chat?.messages.length && !sending && (
                     <div className="asst-empty">
                       <Sparkles size={20} strokeWidth={1.25} className="muted" />
-                      <p className="desc">Tell me what you need to get done. I’ll draft a focus queue — you confirm before anything is added.</p>
+                      <p className="desc">
+                        Tell me what to focus on, or ask me to draft notes for the current task — you confirm before anything is saved.
+                      </p>
                     </div>
                   )}
                   {chat?.messages.map((m) => (
@@ -336,10 +414,18 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
                       {m.role === "assistant" && m.proposedTasks && m.proposedTasks.length > 0 && (
                         <ProposedCard
                           tasks={m.proposedTasks}
-                          queued={m.queued}
+                          queued={false}
                           busy={confirming === m.id}
-                          onConfirm={() => void confirm(m.id)}
-                          onDiscard={() => discard(m.id)}
+                          onConfirm={() => void confirmTasks(m.id)}
+                          onDiscard={() => discardTasks(m.id)}
+                        />
+                      )}
+                      {m.role === "assistant" && m.proposedNote && (
+                        <ProposedNoteCard
+                          note={m.proposedNote}
+                          busy={confirming === m.id}
+                          onConfirm={() => void confirmNote(m.id)}
+                          onDiscard={() => discardNote(m.id)}
                         />
                       )}
                     </div>
@@ -364,7 +450,7 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
                     ref={inputRef}
                     rows={1}
                     value={input}
-                    placeholder="Describe your tasks…"
+                    placeholder="Tasks, notes, ideas…"
                     disabled={sending || !chat}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => {

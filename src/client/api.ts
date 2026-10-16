@@ -82,8 +82,16 @@ export const assistantApi = {
   create: () => request<AssistantChat>("POST", "/api/assistant/chats"),
   get: (id: string) => request<AssistantChat>("GET", `/api/assistant/chats/${id}`),
   remove: (id: string) => request<{ ok: boolean }>("DELETE", `/api/assistant/chats/${id}`),
-  send: (id: string, content: string) =>
-    request<AssistantMessage>("POST", `/api/assistant/chats/${id}/messages`, { content }),
-  confirm: (id: string, messageId: string) =>
-    request<{ state: AppState; count: number }>("POST", `/api/assistant/chats/${id}/confirm`, { messageId }),
+  send: (id: string, content: string, focusTaskId?: string | null) =>
+    request<AssistantMessage>("POST", `/api/assistant/chats/${id}/messages`, { content, focusTaskId }),
+  confirm: (
+    id: string,
+    messageId: string,
+    opts: { applyTasks?: boolean; applyNote?: boolean; focusTaskId?: string | null } = {},
+  ) =>
+    request<{ state: AppState; count: number; note: { taskId: string; content: string; version: number } | null }>(
+      "POST",
+      `/api/assistant/chats/${id}/confirm`,
+      { messageId, ...opts },
+    ),
 };

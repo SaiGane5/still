@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Plus } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ensureNativeNotificationPermission, isNativeApp } from "@/client/native";
-import { flushAllKeepalive, hasUnsavedNotes } from "@/client/notesRegistry";
+import { flushAllKeepalive, getNoteSession, hasUnsavedNotes } from "@/client/notesRegistry";
 import { useFocusTimer } from "@/client/useFocusTimer";
 import { useSettings, useStill, type TimerReading } from "@/client/useStill";
 import { useTimerFeedback } from "@/client/useTimerFeedback";
@@ -43,6 +43,10 @@ export function AppShell() {
     taskTitle: head?.title ?? "",
     seedKey: seed?.key ?? null,
     onTimeUp: () => setExtendOpen(true),
+    onNotificationAction: (action) => {
+      if (action === "pause" && timer.running) timer.toggle();
+      else if (action === "resume" && !timer.running && !timer.expired) timer.toggle();
+    },
   });
 
   // Ask for notification permission once inside the native shell (user-gesture friendly: first resume).
@@ -234,9 +238,15 @@ export function AppShell() {
 
       {!fullscreen && (
         <Assistant
+          focusTaskId={head?.id ?? null}
           onQueued={(s) => {
             still.applyRemote(s);
             still.setToast(`Added to your queue`);
+          }}
+          onNoteSaved={(taskId, content, version) => {
+            getNoteSession(taskId).applyServerNote(content, version);
+            setNotesOpen(true);
+            still.setToast("Notes updated");
           }}
         />
       )}

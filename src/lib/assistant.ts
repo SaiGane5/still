@@ -13,9 +13,20 @@ export type ProposedTask = {
   plannedMinutes: number;
 };
 
+export const proposedNoteSchema = z.object({
+  content: z.string().min(1).max(20_000),
+  mode: z.enum(["append", "replace"]).optional(),
+});
+
+export type ProposedNote = {
+  content: string;
+  mode: "append" | "replace";
+};
+
 export const assistantReplySchema = z.object({
   reply: z.string().min(1).max(4000),
   tasks: z.array(proposedTaskSchema).max(20).optional(),
+  note: proposedNoteSchema.optional().nullable(),
 });
 
 export function normalizeProposedTasks(
@@ -31,6 +42,16 @@ export function normalizeProposedTasks(
     .filter((t) => t.title.length > 0);
 }
 
+export function normalizeProposedNote(
+  note: z.infer<typeof proposedNoteSchema> | undefined | null,
+): ProposedNote | null {
+  if (!note?.content?.trim()) return null;
+  return {
+    content: String(note.content).trim().slice(0, 20_000),
+    mode: note.mode === "replace" ? "replace" : "append",
+  };
+}
+
 export type AssistantChatSummary = {
   id: string;
   title: string;
@@ -43,6 +64,7 @@ export type AssistantMessage = {
   role: "user" | "assistant";
   content: string;
   proposedTasks: ProposedTask[] | null;
+  proposedNote: ProposedNote | null;
   queued: boolean;
   createdAt: string;
 };

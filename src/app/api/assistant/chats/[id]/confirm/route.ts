@@ -7,5 +7,9 @@ type P = { params: Promise<{ id: string }> };
 export const POST = (req: Request, { params }: P) =>
   route(async ({ userId, timezone }) => {
     const body = confirmSchema.parse(await readJson(req));
-    return confirmProposedTasks(userId, (await params).id, body.messageId, timezone);
+    return confirmProposedTasks(userId, (await params).id, body.messageId, timezone, {
+      applyTasks: body.applyTasks,
+      applyNote: body.applyNote,
+      focusTaskId: body.focusTaskId,
+    });
   })(req);
