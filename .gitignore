@@ -11,3 +11,5 @@ next-env.d.ts
 a1.wav
 a2.wav
 a3.wav
+.vercel
+.env*
