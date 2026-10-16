@@ -160,8 +160,8 @@ input, textarea { font: inherit; color: inherit; }
 .bar { height: 2px; background: var(--line); border-radius: 2px; overflow: hidden; }
 .bar-fill { height: 100%; background: var(--ink); transition: width 0.5s var(--ease); }
 .progress-popover {
-  left: 0; right: auto; top: auto; bottom: calc(100% + 12px);
-  width: min(300px, 72vw); z-index: 35;
+  /* Position is set inline to fixed + above the trigger so .shell overflow doesn't clip it */
+  z-index: 45;
 }
 .progress-popover-empty { margin: 0; font-size: 13px; }
 .progress-recent { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -181,11 +181,27 @@ input, textarea { font: inherit; color: inherit; }
 /* popover, composer */
 .popover { position: absolute; right: 0; top: 44px; z-index: 30; width: 280px; padding: 16px 18px; background: var(--editor); border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; gap: 14px; font-size: 13.5px; }
 .settings-hint { margin: -4px 0 0; font-size: 12px; line-height: 1.4; }
+.settings-date { margin: 0; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2); font-size: 11px; }
+.settings-nav-link {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 0 12px; border-bottom: 1px solid var(--line); margin-bottom: 2px;
+  font-size: 13.5px; color: var(--ink); text-decoration: none;
+}
+.settings-sound-label { display: inline-flex; align-items: center; gap: 8px; }
 .settings-account {
   display: flex; flex-direction: column; gap: 4px;
   padding-top: 12px; border-top: 1px solid var(--line);
 }
 .settings-account .account-action { padding-top: 8px; text-decoration: none; }
+.settings-account-identity { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.settings-avatar {
+  width: 36px; height: 36px; border-radius: 999px; object-fit: cover; flex: none;
+  border: 1px solid var(--line);
+}
+.settings-avatar-fallback {
+  display: grid; place-items: center; font-size: 13px; font-weight: 600;
+  background: rgba(255,255,255,0.06);
+}
 .field-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
 .stepper { display: inline-flex; align-items: baseline; gap: 6px; }
 .stepper input { width: 56px; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: right; padding: 2px 0; font-variant-numeric: tabular-nums; }
@@ -398,6 +414,14 @@ input, textarea { font: inherit; color: inherit; }
   transition: transform 0.2s var(--ease);
 }
 .asst-fab:hover { transform: translateY(-1px); }
+.asst-scrim {
+  position: fixed; inset: 0; z-index: 55;
+  background: rgba(0, 0, 0, 0.45); border: 0; cursor: pointer;
+}
+.asst-sheet-handle {
+  display: none; width: 36px; height: 4px; border-radius: 999px;
+  background: var(--line); margin: 10px auto 0;
+}
 .asst-panel {
   position: fixed; z-index: 56;
   right: max(18px, env(safe-area-inset-right)); bottom: calc(max(22px, env(safe-area-inset-bottom)) + 68px);
@@ -406,6 +430,7 @@ input, textarea { font: inherit; color: inherit; }
   display: flex; flex-direction: column; overflow: hidden;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.4);
 }
+.asst-close { flex: none; }
 .asst-head {
   display: flex; align-items: center; gap: 10px;
   padding: 14px 14px 12px; border-bottom: 1px solid var(--line);
@@ -500,9 +525,16 @@ input, textarea { font: inherit; color: inherit; }
 .asst-history-item time { font-size: 11px; color: var(--ink-2); letter-spacing: 0.06em; text-transform: uppercase; }
 
 @media (max-width: 560px) {
+  .header-date-desktop { display: none; }
+  .header-right { gap: 4px; }
+  .settings-popover { width: min(300px, calc(100vw - 28px)); }
+  .asst-sheet-handle { display: block; }
   .asst-panel {
-    right: 0; left: 0; bottom: 0; width: 100%; height: min(78dvh, 100dvh);
+    right: 0; left: 0; bottom: 0; width: 100%;
+    height: min(88dvh, calc(100dvh - env(safe-area-inset-top) - 12px));
+    padding-bottom: env(safe-area-inset-bottom);
     border-radius: 20px 20px 0 0; border-left: 0; border-right: 0; border-bottom: 0;
   }
   .asst-fab { bottom: max(18px, env(safe-area-inset-bottom)); right: max(18px, env(safe-area-inset-right)); }
+  .asst-composer { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
 }

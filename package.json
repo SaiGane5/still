@@ -19,6 +19,7 @@
     "@ai-sdk/google": "^4.0.98",
     "@capacitor/android": "^8.5.3",
     "@capacitor/app": "^8.1.2",
+    "@capacitor/browser": "^8.0.5",
     "@capacitor/core": "^8.5.3",
     "@capacitor/haptics": "^8.0.2",
     "@capacitor/local-notifications": "^8.3.1",

@@ -1,4 +1,4 @@
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { z } from "zod";
 import { getPool, withTx } from "./db";
@@ -6,6 +6,7 @@ import { HttpError } from "./http-error";
 import { createTask } from "./tasks";
 import {
   assistantReplySchema,
+  normalizeProposedTasks,
   type AssistantChat,
   type AssistantChatSummary,
   type AssistantMessage,
@@ -20,6 +21,14 @@ Your job:
 4. If they are only chatting or clarifying (not listing work), return an empty tasks array.
 5. Never invent unrelated tasks. Prefer fewer, clearer tasks over many vague ones.
 6. Never say you added, queued, or saved tasks — the UI asks the user to confirm before anything is queued. Say you drafted a list they can approve.`;
+
+/** Models known to accept generateContent for this API key; try in order on overload/404. */
+const GEMINI_MODELS = [
+  "gemini-3.5-flash",
+  "gemini-3.6-flash",
+  "gemini-flash-lite-latest",
+  "gemini-3.8-flash",
+] as const;
 
 function geminiKey(): string {
   const key = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY;
@@ -93,6 +102,31 @@ export const sendSchema = z.object({
   content: z.string().trim().min(1).max(4000),
 });
 
+async function callGemini(
+  messages: { role: "user" | "assistant"; content: string }[],
+): Promise<{ reply: string; tasks: ProposedTask[] }> {
+  let lastErr: unknown;
+  for (const modelId of GEMINI_MODELS) {
+    try {
+      const result = await generateText({
+        model: google()(modelId),
+        output: Output.object({ schema: assistantReplySchema }),
+        system: SYSTEM,
+        messages,
+        temperature: 0.4,
+        maxRetries: 1,
+      });
+      const obj = result.output;
+      if (!obj?.reply?.trim()) throw new Error("empty reply");
+      return { reply: obj.reply.trim(), tasks: normalizeProposedTasks(obj.tasks) };
+    } catch (err) {
+      lastErr = err;
+      console.error(`gemini assistant error (${modelId})`, err);
+    }
+  }
+  throw lastErr ?? new Error("all gemini models failed");
+}
+
 export async function sendMessage(userId: string, chatId: string, content: string): Promise<AssistantMessage> {
   await assertChat(userId, chatId);
   const pool = getPool();
@@ -104,32 +138,25 @@ export async function sendMessage(userId: string, chatId: string, content: strin
     [chatId],
   );
 
-  let reply: z.infer<typeof assistantReplySchema>;
-  const models = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-flash-latest"] as const;
-  let lastErr: unknown;
-  reply = { reply: "", tasks: [] };
-  for (const modelId of models) {
-    try {
-      const result = await generateObject({
-        model: google()(modelId),
-        schema: assistantReplySchema,
-        system: SYSTEM,
-        messages: history.rows.map((r) => ({
-          role: r.role as "user" | "assistant",
-          content: r.content,
-        })),
-        temperature: 0.4,
-        maxRetries: 2,
-      });
-      reply = result.object;
-      lastErr = null;
-      break;
-    } catch (err) {
-      lastErr = err;
-      console.error(`gemini assistant error (${modelId})`, err);
-    }
-  }
-  if (lastErr || !reply.reply) {
+  let reply: { reply: string; tasks: ProposedTask[] };
+  try {
+    reply = await callGemini(
+      history.rows.map((r) => ({
+        role: r.role as "user" | "assistant",
+        content: r.content,
+      })),
+    );
+  } catch (err) {
+    // Roll back the orphan user turn so retries don't stack failed messages.
+    await pool.query(
+      `DELETE FROM assistant_messages WHERE chat_id = $1 AND role = 'user' AND content = $2
+       AND id = (
+         SELECT id FROM assistant_messages WHERE chat_id = $1 AND role = 'user' AND content = $2
+         ORDER BY created_at DESC LIMIT 1
+       )`,
+      [chatId, content],
+    );
+    console.error("gemini assistant exhausted models", err);
     throw new HttpError(502, "assistant_failed", "The assistant couldn’t reply. Try again in a moment.");
   }
 
@@ -169,7 +196,7 @@ export async function confirmProposedTasks(userId: string, chatId: string, messa
   const msg = rows[0];
   if (!msg) throw new HttpError(404, "not_found", "Message not found");
   if (msg.queued) throw new HttpError(409, "already_queued", "Those tasks were already added");
-  const tasks = (msg.proposed_tasks ?? []) as ProposedTask[];
+  const tasks = normalizeProposedTasks(msg.proposed_tasks ?? []);
   if (!tasks.length) throw new HttpError(400, "invalid_request", "No tasks to add");
 
   let state = null as Awaited<ReturnType<typeof createTask>>["state"] | null;

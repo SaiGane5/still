@@ -51,7 +51,9 @@ function readCookie(req: Request, name: string): string | undefined {
   }
 }
 
-type OAuthState = { n: string; g?: string };
+type OAuthState = { n: string; g?: string; native?: boolean };
+
+const MOBILE_SCHEME = () => process.env.MOBILE_APP_SCHEME?.replace(/\/$/, "") || "app.still.focus";
 
 function encodeState(payload: OAuthState): string {
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -65,7 +67,28 @@ function decodeState(raw: string): OAuthState | null {
     const parsed = JSON.parse(Buffer.from(body, "base64url").toString());
     if (typeof parsed?.n !== "string" || !parsed.n) return null;
     if (parsed.g != null && typeof parsed.g !== "string") return null;
-    return { n: parsed.n, g: parsed.g };
+    if (parsed.native != null && typeof parsed.native !== "boolean") return null;
+    return { n: parsed.n, g: parsed.g, native: parsed.native === true };
+  } catch {
+    return null;
+  }
+}
+
+/** Short-lived signed handoff so the WebView can mint its session cookie after Custom Tabs OAuth. */
+export function createNativeHandoff(userId: string): string {
+  const exp = Math.floor(Date.now() / 1000) + 300; // 5 minutes
+  const body = Buffer.from(JSON.stringify({ u: userId, exp })).toString("base64url");
+  return `${body}.${sign(body)}`;
+}
+
+export function readNativeHandoff(token: string): string | null {
+  const [body, sig] = token.split(".");
+  if (!body || !sig || !safeEqual(sign(body), sig)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(body, "base64url").toString()) as { u?: string; exp?: number };
+    if (typeof parsed.u !== "string" || !parsed.u) return null;
+    if (typeof parsed.exp !== "number" || parsed.exp * 1000 < Date.now()) return null;
+    return parsed.u;
   } catch {
     return null;
   }
@@ -100,14 +123,7 @@ export async function getProfile(userId: string): Promise<UserProfile> {
   };
 }
 
-/** Start Google OAuth: set state cookie and return the authorization URL. */
-export function beginGoogleAuth(req: Request): { url: string; setCookie: string } {
-  const { clientId } = googleConfig();
-  const nonce = crypto.randomBytes(16).toString("base64url");
-  const guestId = readSessionUserId(req) ?? undefined;
-  const state = encodeState({ n: nonce, g: guestId });
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
-  const setCookie = `${STATE_COOKIE}=${nonce}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${secure}`;
+function googleAuthUrl(clientId: string, req: Request, state: string): string {
   const redirectUri = `${publicOrigin(req)}/api/auth/google/callback`;
   const params = new URLSearchParams({
     client_id: clientId,
@@ -118,7 +134,31 @@ export function beginGoogleAuth(req: Request): { url: string; setCookie: string 
     access_type: "online",
     prompt: "select_account",
   });
-  return { url: `${GOOGLE_AUTH}?${params}`, setCookie };
+  return `${GOOGLE_AUTH}?${params}`;
+}
+
+/** Start Google OAuth: set state cookie and return the authorization URL. */
+export function beginGoogleAuth(req: Request): { url: string; setCookie: string } {
+  const { clientId } = googleConfig();
+  const nonce = crypto.randomBytes(16).toString("base64url");
+  const guestId = readSessionUserId(req) ?? undefined;
+  const state = encodeState({ n: nonce, g: guestId });
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const setCookie = `${STATE_COOKIE}=${nonce}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${secure}`;
+  return { url: googleAuthUrl(clientId, req, state), setCookie };
+}
+
+/**
+ * Native (Capacitor) OAuth start: build Google URL with guest id embedded in signed state.
+ * Custom Tabs don't share the WebView cookie jar, so we skip the state cookie and
+ * verify only the signed state on callback.
+ */
+export function beginNativeGoogleAuth(req: Request, guestId?: string | null): { url: string } {
+  const { clientId } = googleConfig();
+  const nonce = crypto.randomBytes(16).toString("base64url");
+  const g = guestId || readSessionUserId(req) || undefined;
+  const state = encodeState({ n: nonce, g, native: true });
+  return { url: googleAuthUrl(clientId, req, state) };
 }
 
 type GoogleProfile = { sub: string; email?: string; name?: string; picture?: string };
@@ -202,10 +242,17 @@ export async function finishGoogleAuth(
     return { redirectTo: `${origin}/?auth=error`, setCookies: [clearState] };
   }
 
-  const expectedNonce = readCookie(req, STATE_COOKIE);
   const state = decodeState(stateRaw);
-  if (!expectedNonce || !state || state.n !== expectedNonce) {
+  if (!state) {
     return { redirectTo: `${origin}/?auth=error`, setCookies: [clearState] };
+  }
+  // Browser OAuth: require matching HttpOnly state cookie. Native: signed state alone
+  // (Custom Tabs never see the WebView's cookies).
+  if (!state.native) {
+    const expectedNonce = readCookie(req, STATE_COOKIE);
+    if (!expectedNonce || state.n !== expectedNonce) {
+      return { redirectTo: `${origin}/?auth=error`, setCookies: [clearState] };
+    }
   }
 
   const profile = await exchangeCode(req, code);
@@ -258,6 +305,14 @@ export async function finishGoogleAuth(
   }
   if (state.g && state.g !== userId) {
     await mergeGuestInto(state.g, userId);
+  }
+
+  if (state.native) {
+    const handoff = createNativeHandoff(userId);
+    return {
+      redirectTo: `${MOBILE_SCHEME()}://auth?t=${encodeURIComponent(handoff)}`,
+      setCookies: [clearState],
+    };
   }
 
   return {

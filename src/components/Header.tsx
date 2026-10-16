@@ -1,10 +1,8 @@
 "use client";
-import { Settings as Gear, Volume2, VolumeX } from "lucide-react";
+import { Settings as Gear } from "lucide-react";
 import { useEffect, useState } from "react";
-import { ensureNotificationPermission } from "@/client/notify";
-import { unlockAudio } from "@/client/sounds";
+import { installNativeAuthListener } from "@/client/native-auth";
 import type { Settings } from "@/client/useStill";
-import { AccountMenu } from "./AccountMenu";
 import { SettingsPopover } from "./SettingsPopover";
 
 export function Header({ settings, onSettings }: { settings: Settings; onSettings: (p: Partial<Settings>) => void }) {
@@ -17,6 +15,10 @@ export function Header({ settings, onSettings }: { settings: Settings; onSetting
     fmt();
     const id = setInterval(fmt, 60_000);
     return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    installNativeAuthListener();
   }, []);
 
   useEffect(() => {
@@ -42,29 +44,12 @@ export function Header({ settings, onSettings }: { settings: Settings; onSetting
       </div>
       <div className="header-right">
         {authFlash && <span className="auth-flash" role="status">{authFlash}</span>}
-        <time className="date" suppressHydrationWarning>{date}</time>
-        <AccountMenu />
-        <button
-          className="icon-btn"
-          aria-label={settings.soundEnabled ? "Mute timer sounds" : "Unmute timer sounds"}
-          aria-pressed={!settings.soundEnabled}
-          title={settings.soundEnabled ? "Sound on" : "Muted"}
-          onClick={() => {
-            const next = !settings.soundEnabled;
-            if (next) {
-              unlockAudio();
-              void ensureNotificationPermission();
-            }
-            onSettings({ soundEnabled: next });
-          }}
-        >
-          {settings.soundEnabled ? <Volume2 size={18} strokeWidth={1.5} /> : <VolumeX size={18} strokeWidth={1.5} />}
-        </button>
+        <time className="date header-date-desktop" suppressHydrationWarning>{date}</time>
         <div className="popover-anchor">
           <button className="icon-btn" aria-label="Settings" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((o) => !o)}>
             <Gear size={18} strokeWidth={1.5} />
           </button>
-          <SettingsPopover open={open} onClose={() => setOpen(false)} settings={settings} onChange={onSettings} />
+          <SettingsPopover open={open} onClose={() => setOpen(false)} settings={settings} onChange={onSettings} dateLabel={date} />
         </div>
       </div>
     </header>

@@ -1,7 +1,7 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { archiveApi } from "@/client/api";
 import type { CompletedNoteItem, Progress } from "@/lib/types";
 
@@ -19,14 +19,31 @@ function formatWhen(iso: string) {
   }
 }
 
+type PopPos = { left: number; bottom: number; width: number };
+
 export function DailyProgress({ progress }: { progress: Progress }) {
   const total = progress.completedToday + progress.pendingCount;
   const pct = total ? Math.round((progress.completedToday / total) * 100) : 0;
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<CompletedNoteItem[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [pos, setPos] = useState<PopPos | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const place = useCallback(() => {
+    const el = root.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const width = Math.min(300, Math.max(220, window.innerWidth - 24));
+    let left = r.left;
+    if (left + width > window.innerWidth - 12) left = Math.max(12, window.innerWidth - width - 12);
+    setPos({
+      left,
+      bottom: window.innerHeight - r.top + 10,
+      width,
+    });
+  }, []);
 
   const loadRecent = useCallback(async () => {
     if (items) return;
@@ -42,9 +59,10 @@ export function DailyProgress({ progress }: { progress: Progress }) {
   }, [items]);
 
   const show = useCallback(() => {
+    place();
     setOpen(true);
     void loadRecent();
-  }, [loadRecent]);
+  }, [loadRecent, place]);
 
   const hideSoon = useCallback(() => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
@@ -56,15 +74,29 @@ export function DailyProgress({ progress }: { progress: Progress }) {
     setOpen(true);
   }, []);
 
-  // Refresh list when today's count changes (e.g. after completing a task)
   useEffect(() => {
     setItems(null);
   }, [progress.completedToday]);
 
+  useLayoutEffect(() => {
+    if (!open) return;
+    place();
+    const onResize = () => place();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onResize, true);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onResize, true);
+    };
+  }, [open, place]);
+
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) setOpen(false);
+      if (root.current && !root.current.contains(e.target as Node)) {
+        const t = e.target as HTMLElement;
+        if (!t.closest?.(".progress-popover")) setOpen(false);
+      }
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -77,9 +109,12 @@ export function DailyProgress({ progress }: { progress: Progress }) {
     };
   }, [open]);
 
-  useEffect(() => () => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    },
+    [],
+  );
 
   return (
     <div
@@ -110,11 +145,12 @@ export function DailyProgress({ progress }: { progress: Progress }) {
       </button>
 
       <AnimatePresence>
-        {open && (
+        {open && pos && (
           <motion.div
             role="dialog"
             aria-label="Recently completed"
             className="popover progress-popover"
+            style={{ position: "fixed", left: pos.left, bottom: pos.bottom, width: pos.width, top: "auto", right: "auto" }}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}

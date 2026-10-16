@@ -101,6 +101,18 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
   }, [openChat, refreshList]);
 
   useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [open]);
+
+  useEffect(() => {
     if (!open || boot) return;
     setBoot(true);
     void ensureChat().catch((e) => setError(e instanceof ApiError ? e.message : "Couldn’t open assistant"));
@@ -220,32 +232,49 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
     );
   };
 
+  const close = () => setOpen(false);
+
   return (
     <>
-      <motion.button
-        type="button"
-        className="asst-fab"
-        aria-label={open ? "Close assistant" : "Open assistant"}
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        whileTap={{ scale: 0.94 }}
-        animate={{ rotate: open ? 45 : 0 }}
-        transition={{ type: "spring", stiffness: 380, damping: 28 }}
-      >
-        {open ? <X size={22} strokeWidth={1.75} /> : <Sparkles size={22} strokeWidth={1.5} />}
-      </motion.button>
+      {!open && (
+        <motion.button
+          type="button"
+          className="asst-fab"
+          aria-label="Open assistant"
+          aria-expanded={false}
+          onClick={() => setOpen(true)}
+          whileTap={{ scale: 0.94 }}
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ type: "spring", stiffness: 380, damping: 28 }}
+        >
+          <Sparkles size={22} strokeWidth={1.5} />
+        </motion.button>
+      )}
 
       <AnimatePresence>
         {open && (
+          <>
+          <motion.button
+            type="button"
+            className="asst-scrim"
+            aria-label="Dismiss assistant"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={close}
+          />
           <motion.div
             className="asst-panel"
             role="dialog"
+            aria-modal="true"
             aria-label="still. assistant"
             initial={{ opacity: 0, y: 24, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 16, scale: 0.97 }}
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
           >
+            <div className="asst-sheet-handle" aria-hidden />
             <header className="asst-head">
               {view === "history" ? (
                 <button type="button" className="icon-btn small" aria-label="Back to chat" onClick={() => setView("chat")}>
@@ -262,6 +291,9 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
               </div>
               <button type="button" className="icon-btn small" aria-label="New chat" onClick={() => void startNew()}>
                 <Plus size={18} strokeWidth={1.5} />
+              </button>
+              <button type="button" className="icon-btn small asst-close" aria-label="Close assistant" onClick={close}>
+                <X size={18} strokeWidth={1.75} />
               </button>
             </header>
 
@@ -349,6 +381,7 @@ export function Assistant({ onQueued }: { onQueued: (state: AppState) => void })
               </>
             )}
           </motion.div>
+          </>
         )}
       </AnimatePresence>
     </>
