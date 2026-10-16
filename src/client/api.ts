@@ -58,6 +58,8 @@ export const notesApi = {
       throw e;
     }
   },
+  aiRewrite: (text: string, instruction?: string, context?: string) =>
+    request<{ text: string }>("POST", "/api/notes/ai-rewrite", { text, instruction, context }),
 };
 
 export const authApi = {

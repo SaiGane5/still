@@ -271,6 +271,50 @@ input, textarea { font: inherit; color: inherit; }
 .editor-area code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; background: rgba(37,41,44,0.06); border-radius: 4px; padding: 1px 4px; }
 
 .format-bar { position: absolute; top: -34px; right: 0; display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); background: var(--editor); border-radius: 999px; opacity: 0; transform: translateY(4px); pointer-events: none; transition: opacity 0.18s, transform 0.18s var(--ease); z-index: 2; }
+.format-bar-sep { width: 1px; height: 14px; background: var(--line); margin: 0 3px; align-self: center; }
+
+.editor-area .note-hl {
+  background: rgba(244, 241, 234, 0.14);
+  border-bottom: 1.5px solid rgba(244, 241, 234, 0.45);
+  border-radius: 3px;
+  padding: 0 1px;
+  cursor: help;
+  transition: background 0.15s, border-color 0.15s;
+}
+.editor-area .note-hl:hover,
+.editor-area .note-hl:focus {
+  background: rgba(244, 241, 234, 0.22);
+  border-bottom-color: rgba(244, 241, 234, 0.75);
+  outline: none;
+}
+
+.note-float {
+  position: absolute; z-index: 12; width: min(300px, calc(100% - 16px));
+  padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line);
+  background: var(--editor); box-shadow: 0 14px 36px rgba(0,0,0,0.35);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.note-float--ai { top: 8px; right: 0; }
+.note-float--hover { position: absolute; }
+.note-float-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-2);
+}
+.note-float-head strong { flex: 1; color: var(--ink); font-size: 13px; letter-spacing: 0; text-transform: none; font-weight: 600; }
+.note-float-quote {
+  margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink-2);
+  padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.04);
+  max-height: 72px; overflow: hidden;
+}
+.note-float-body { margin: 0; font-size: 14px; line-height: 1.45; color: var(--ink); white-space: pre-wrap; }
+.note-float-input {
+  width: 100%; background: transparent; border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; font-size: 14px; color: var(--ink);
+}
+.note-float-input:focus { outline: none; border-color: var(--ink-3); }
+.note-float-textarea { resize: vertical; min-height: 72px; line-height: 1.4; }
+.note-float-error { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.note-float-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
 .format-bar[data-visible="true"] { opacity: 1; transform: none; pointer-events: auto; }
 
 /* responsive */
