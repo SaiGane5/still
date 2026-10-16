@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { elapsedFraction, isExpired, pause, remainingSeconds, resume, snapFrom, type TimerSnap } from "@/lib/timer";
 import { api } from "./api";
+import { unlockAudio } from "./sounds";
 import type { Seed, TimerReading } from "./useStill";
 
 const SYNC_EVERY_MS = 20_000;
@@ -88,6 +89,7 @@ export function useFocusTimer(seed: Seed | null, plannedSeconds: number) {
   }, [sync]);
 
   const toggle = useCallback(() => {
+    unlockAudio(); // user gesture — allow tick / alarm later
     const t = Date.now();
     const cur = live.current.snap;
     const next = cur.running ? pause(cur, t) : resume(cur, t);

@@ -5,11 +5,11 @@ import { api, ApiError } from "./api";
 import { forgetSession, localDrafts } from "./notesRegistry";
 
 export type Seed = { key: number; taskId: string | null; remainingSeconds: number; running: boolean };
-export type Settings = { defaultMinutes: number; autoStart: boolean };
+export type Settings = { defaultMinutes: number; autoStart: boolean; soundEnabled: boolean };
 export type TimerReading = { id: string; remainingSeconds: number; running: boolean } | null;
 
 const SETTINGS_KEY = "still:settings";
-const DEFAULTS: Settings = { defaultMinutes: 25, autoStart: true };
+const DEFAULTS: Settings = { defaultMinutes: 25, autoStart: true, soundEnabled: true };
 
 export function useSettings() {
   const [settings, setSettings] = useState<Settings>(DEFAULTS);

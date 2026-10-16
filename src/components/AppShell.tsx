@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { flushAllKeepalive, hasUnsavedNotes } from "@/client/notesRegistry";
 import { useFocusTimer } from "@/client/useFocusTimer";
 import { useSettings, useStill, type TimerReading } from "@/client/useStill";
+import { useTimerFeedback } from "@/client/useTimerFeedback";
 import type { Task } from "@/lib/types";
 import { DailyProgress } from "./DailyProgress";
 import { FocusView } from "./FocusView";
@@ -21,6 +22,16 @@ export function AppShell() {
   const head = state?.tasks[0];
   const timer = useFocusTimer(seed, head?.plannedSeconds ?? 0);
   readRef.current = timer.read;
+
+  useTimerFeedback({
+    soundEnabled: settings.soundEnabled,
+    seconds: timer.seconds,
+    running: timer.running,
+    expired: timer.expired,
+    taskId: head?.id ?? null,
+    taskTitle: head?.title ?? "",
+    seedKey: seed?.key ?? null,
+  });
 
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesUnsafe, setNotesUnsafe] = useState(false);

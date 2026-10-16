@@ -1,5 +1,5 @@
 import { ConflictError } from "@/lib/noteSession";
-import type { AppState, Note } from "@/lib/types";
+import type { AppState, CompletedNoteItem, Note, UserProfile } from "@/lib/types";
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public body?: any) {
@@ -56,5 +56,21 @@ export const notesApi = {
       if (e instanceof ApiError && e.status === 409 && e.body?.note) throw new ConflictError(e.body.note);
       throw e;
     }
+  },
+};
+
+export const authApi = {
+  me: () => request<{ user: UserProfile; googleEnabled: boolean }>("GET", "/api/auth/me"),
+  logout: () => request<{ ok: boolean }>("POST", "/api/auth/logout"),
+};
+
+export const archiveApi = {
+  list: (opts: { limit?: number; offset?: number; all?: boolean } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.limit != null) q.set("limit", String(opts.limit));
+    if (opts.offset != null) q.set("offset", String(opts.offset));
+    if (opts.all) q.set("all", "1");
+    const qs = q.toString();
+    return request<{ items: CompletedNoteItem[]; total: number }>("GET", `/api/completed${qs ? `?${qs}` : ""}`);
   },
 };

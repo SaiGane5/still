@@ -10,6 +10,8 @@ import * as skip from "@/app/api/tasks/[id]/skip/route";
 import * as timer from "@/app/api/tasks/[id]/timer/route";
 import * as notes from "@/app/api/tasks/[id]/notes/route";
 import * as reorder from "@/app/api/tasks/reorder/route";
+import * as completed from "@/app/api/completed/route";
+import * as me from "@/app/api/auth/me/route";
 
 const HOST = "http://localhost:3100";
 
@@ -235,5 +237,49 @@ describe("notes versioning", () => {
     const put = () => notes.PUT(call(c, "PUT", `/api/tasks/${a.id}/notes`, { content: "same", baseVersion: 0 }), ctx(a.id));
     expect((await put()).status).toBe(200);
     expect((await put()).status).toBe(200);
+  });
+});
+
+describe("completed notes archive", () => {
+  it("lists notes from completed tasks and keeps them readable", async () => {
+    const c = await newClient();
+    const withNotes = await add(c, "done with notes");
+    const bare = await add(c, "done without notes");
+    await notes.PUT(call(c, "PUT", `/api/tasks/${withNotes.id}/notes`, { content: "shipped it", baseVersion: 0 }), ctx(withNotes.id));
+    await complete.POST(call(c, "POST", `/api/tasks/${withNotes.id}/complete`, {}), ctx(withNotes.id));
+    await complete.POST(call(c, "POST", `/api/tasks/${bare.id}/complete`, {}), ctx(bare.id));
+
+    const archived = await (await completed.GET(call(c, "GET", "/api/completed"))).json();
+    expect(archived.total).toBe(1);
+    expect(archived.items).toHaveLength(1);
+    expect(archived.items[0]).toMatchObject({ id: withNotes.id, title: "done with notes", hasNotes: true });
+    expect(archived.items[0].notePreview).toContain("shipped");
+
+    const all = await (await completed.GET(call(c, "GET", "/api/completed?all=1"))).json();
+    expect(all.total).toBe(2);
+
+    const n = await (await notes.GET(call(c, "GET", `/api/tasks/${withNotes.id}/notes`), ctx(withNotes.id))).json();
+    expect(n.content).toBe("shipped it");
+  });
+
+  it("does not leak another user's completed notes", async () => {
+    const a = await newClient();
+    const b = await newClient();
+    const t = await add(a, "secret archive");
+    await notes.PUT(call(a, "PUT", `/api/tasks/${t.id}/notes`, { content: "private", baseVersion: 0 }), ctx(t.id));
+    await complete.POST(call(a, "POST", `/api/tasks/${t.id}/complete`, {}), ctx(t.id));
+    const leaked = await (await completed.GET(call(b, "GET", "/api/completed"))).json();
+    expect(leaked.items.map((i: any) => i.id)).not.toContain(t.id);
+  });
+});
+
+describe("auth profile", () => {
+  it("returns a guest profile until Google is linked", async () => {
+    const c = await newClient();
+    const res = await me.GET(call(c, "GET", "/api/auth/me"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.user.signedIn).toBe(false);
+    expect(typeof body.googleEnabled).toBe("boolean");
   });
 });

@@ -76,4 +76,13 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS timer_running BOOLEAN NOT NULL DEFAUL
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS timer_anchor_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 `,
   },
+  {
+    name: "003_google_identity",
+    sql: `
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS display_name TEXT;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+CREATE INDEX IF NOT EXISTS idx_tasks_user_completed ON tasks (user_id, completed_at DESC) WHERE status = 'completed';
+`,
+  },
 ];

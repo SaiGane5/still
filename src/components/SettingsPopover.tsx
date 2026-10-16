@@ -1,6 +1,8 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef } from "react";
+import { ensureNotificationPermission } from "@/client/notify";
+import { unlockAudio } from "@/client/sounds";
 import type { Settings } from "@/client/useStill";
 
 export function SettingsPopover({ open, onClose, settings, onChange }: { open: boolean; onClose: () => void; settings: Settings; onChange: (p: Partial<Settings>) => void }) {
@@ -39,6 +41,24 @@ export function SettingsPopover({ open, onClose, settings, onChange }: { open: b
             <span>Start next task automatically</span>
             <input type="checkbox" className="switch" checked={settings.autoStart} onChange={(e) => onChange({ autoStart: e.target.checked })} />
           </label>
+          <label className="field-row">
+            <span>Timer sounds</span>
+            <input
+              type="checkbox"
+              className="switch"
+              checked={settings.soundEnabled}
+              aria-label="Timer sounds"
+              onChange={(e) => {
+                const on = e.target.checked;
+                if (on) {
+                  unlockAudio();
+                  void ensureNotificationPermission();
+                }
+                onChange({ soundEnabled: on });
+              }}
+            />
+          </label>
+          <p className="muted settings-hint">Ticks while focusing, chime and a notification when time is up.</p>
         </motion.div>
       )}
     </AnimatePresence>

@@ -254,3 +254,52 @@ export async function updateTimer(userId: string, tz: string, id: string, input:
     return loadState(c, userId, tz);
   });
 }
+
+export type CompletedNoteItem = {
+  id: string;
+  title: string;
+  completedAt: string;
+  hasNotes: boolean;
+  notePreview: string;
+};
+
+/** Completed tasks with their notes — the archive / “completed notes” folder. */
+export async function listCompletedWithNotes(
+  userId: string,
+  opts: { limit?: number; offset?: number; notesOnly?: boolean } = {},
+): Promise<{ items: CompletedNoteItem[]; total: number }> {
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
+  const offset = Math.max(opts.offset ?? 0, 0);
+  const notesOnly = opts.notesOnly ?? true;
+  const pool = getPool();
+  const filter = notesOnly
+    ? `AND n.content IS NOT NULL AND length(trim(n.content)) > 0`
+    : "";
+  const count = await pool.query(
+    `SELECT count(*)::int AS n FROM tasks t
+     LEFT JOIN task_notes n ON n.task_id = t.id
+     WHERE t.user_id = $1 AND t.status = 'completed' ${filter}`,
+    [userId],
+  );
+  const { rows } = await pool.query(
+    `SELECT t.id, t.title, t.completed_at,
+            (n.content IS NOT NULL AND length(trim(n.content)) > 0) AS has_notes,
+            left(regexp_replace(COALESCE(n.content, ''), E'[\\n\\r]+', ' ', 'g'), 140) AS note_preview
+     FROM tasks t
+     LEFT JOIN task_notes n ON n.task_id = t.id
+     WHERE t.user_id = $1 AND t.status = 'completed' ${filter}
+     ORDER BY t.completed_at DESC NULLS LAST
+     LIMIT $2 OFFSET $3`,
+    [userId, limit, offset],
+  );
+  return {
+    total: count.rows[0].n,
+    items: rows.map((r) => ({
+      id: r.id as string,
+      title: r.title as string,
+      completedAt: r.completed_at ? (r.completed_at as Date).toISOString() : "",
+      hasNotes: !!r.has_notes,
+      notePreview: ((r.note_preview as string) ?? "").trim(),
+    })),
+  };
+}

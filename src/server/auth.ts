@@ -11,10 +11,10 @@ import { HttpError } from "./http-error";
  *
  *  1. If AUTH_JWT_SECRET is set and the request carries `Authorization: Bearer <HS256 JWT>`,
  *     the token is verified and its `sub` claim is mapped to app_users.auth_provider_id.
- *     Swap `verifyJwt` for your IdP's verifier (JWKS / RS256) when integrating a real provider.
- *  2. Otherwise a per-browser guest account is used, identified by an HMAC-signed,
- *     HttpOnly cookie. Each browser gets its own private user, so there is no shared
- *     account and no cross-user visibility. A forged cookie fails signature verification.
+ *  2. Google OAuth (see google-oauth.ts) writes the same session cookie after linking
+ *     `auth_provider_id = google:<sub>`, enabling cross-device sync.
+ *  3. Otherwise a per-browser guest account is used, identified by an HMAC-signed,
+ *     HttpOnly cookie. Each browser gets its own private user until they sign in.
  */
 
 const COOKIE = "still_session";
@@ -31,7 +31,8 @@ function secret(): string {
 const sign = (value: string) => crypto.createHmac("sha256", secret()).update(value).digest("base64url");
 
 function safeEqual(a: string, b: string) {
-  const ab = Buffer.from(a), bb = Buffer.from(b);
+  const ab = Buffer.from(a),
+    bb = Buffer.from(b);
   return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
 }
 
@@ -63,6 +64,29 @@ export function verifyJwt(token: string, key: string): { sub: string } | null {
 
 export type AuthResult = { userId: string; isNew: boolean; setCookie?: string };
 
+function cookieFlags() {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  return `Path=/; HttpOnly; SameSite=Lax${secure}`;
+}
+
+/** Signed session cookie value for an existing user id. */
+export function sessionCookie(userId: string): string {
+  return `${COOKIE}=${userId}.${sign(userId)}; ${cookieFlags()}; Max-Age=${ONE_YEAR}`;
+}
+
+export function clearSessionCookie(): string {
+  return `${COOKIE}=; ${cookieFlags()}; Max-Age=0`;
+}
+
+/** Returns the verified session user id from the cookie, or null (does not mint guests). */
+export function readSessionUserId(req: Request): string | null {
+  const raw = readCookie(req, COOKIE);
+  if (!raw) return null;
+  const [id, sig] = raw.split(".");
+  if (!id || !sig || !UUID_RE.test(id) || !safeEqual(sign(id), sig)) return null;
+  return id;
+}
+
 export async function authenticate(req: Request): Promise<AuthResult> {
   const pool = getPool();
   const jwtKey = process.env.AUTH_JWT_SECRET;
@@ -79,21 +103,17 @@ export async function authenticate(req: Request): Promise<AuthResult> {
     return { userId: rows[0].id, isNew: rows[0].inserted };
   }
 
-  const raw = readCookie(req, COOKIE);
-  if (raw) {
-    const [id, sig] = raw.split(".");
-    if (id && sig && UUID_RE.test(id) && safeEqual(sign(id), sig)) {
-      const { rowCount } = await pool.query("SELECT 1 FROM app_users WHERE id = $1", [id]);
-      if (rowCount) return { userId: id, isNew: false };
-    }
+  const id = readSessionUserId(req);
+  if (id) {
+    const { rowCount } = await pool.query("SELECT 1 FROM app_users WHERE id = $1", [id]);
+    if (rowCount) return { userId: id, isNew: false };
   }
   const { rows } = await pool.query("INSERT INTO app_users DEFAULT VALUES RETURNING id");
-  const id: string = rows[0].id;
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const newId: string = rows[0].id;
   return {
-    userId: id,
+    userId: newId,
     isNew: true,
-    setCookie: `${COOKIE}=${id}.${sign(id)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${ONE_YEAR}${secure}`,
+    setCookie: sessionCookie(newId),
   };
 }
 

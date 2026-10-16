@@ -30,5 +30,21 @@ export type AppState = {
 
 export type Note = { taskId: string; content: string; version: number };
 
+export type CompletedNoteItem = {
+  id: string;
+  title: string;
+  completedAt: string;
+  hasNotes: boolean;
+  notePreview: string;
+};
+
+export type UserProfile = {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  signedIn: boolean;
+};
+
 export const MIN_SECONDS = 60;
 export const MAX_SECONDS = 8 * 60 * 60;
