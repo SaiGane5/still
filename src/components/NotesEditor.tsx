@@ -1,6 +1,6 @@
 "use client";
-import { Bold, Italic, List, Loader2, MessageSquarePlus, Quote, Sparkles, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Bold, Italic, List, Loader2, MessageSquare, MessageSquarePlus, Quote, Sparkles, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { ApiError, notesApi } from "@/client/api";
 import { renderDoc } from "@/lib/liveMarkdown";
 import { continueList, prefixLines, wrapSelection } from "@/lib/markdown";
@@ -13,7 +13,6 @@ import {
 
 const lines = (root: HTMLElement) => Array.from(root.children) as HTMLElement[];
 
-/** Markdown source of the editor, one DOM block per line. */
 function readText(root: HTMLElement): string {
   const out: string[] = [];
   const walk = (n: Node) => {
@@ -73,6 +72,7 @@ function caretTo(root: HTMLElement, pos: number) {
     rem -= len + 1;
   }
 }
+
 const setSel = (r: Range) => {
   const s = window.getSelection();
   s?.removeAllRanges();
@@ -87,16 +87,51 @@ function selection(root: HTMLElement): { start: number; end: number } | null {
   return { start: Math.min(a, b), end: Math.max(a, b) };
 }
 
+function selectionRect(root: HTMLElement): DOMRect | null {
+  const s = window.getSelection();
+  if (!s || !s.rangeCount || s.isCollapsed) return null;
+  const r = s.getRangeAt(0);
+  if (!root.contains(r.commonAncestorContainer)) return null;
+  const rects = r.getClientRects();
+  if (rects.length) {
+    const first = rects[0];
+    const last = rects[rects.length - 1];
+    return new DOMRect(
+      Math.min(first.left, last.left),
+      Math.min(first.top, last.top),
+      Math.max(first.right, last.right) - Math.min(first.left, last.left),
+      Math.max(first.bottom, last.bottom) - Math.min(first.top, last.top),
+    );
+  }
+  return r.getBoundingClientRect();
+}
+
+const AI_CHIPS = ["Clearer", "Shorter", "Fix grammar", "More formal", "More casual"] as const;
+
+type Bubble = { x: number; y: number; place: "above" | "below" };
+
 type Panel =
   | null
-  | { kind: "ai"; start: number; end: number; quote: string }
-  | { kind: "comment-new"; start: number; end: number; quote: string }
-  | { kind: "comment-view"; id: string; body: string; x: number; y: number };
+  | { kind: "ai"; start: number; end: number; quote: string; bubble: Bubble }
+  | { kind: "comment-new"; start: number; end: number; quote: string; bubble: Bubble }
+  | { kind: "comment-view"; id: string; body: string; bubble: Bubble; pinned: boolean };
+
+function clampBubble(wrap: DOMRect, prefer: { left: number; top: number; height: number }, width = 300): Bubble {
+  const pad = 10;
+  const spaceAbove = prefer.top - wrap.top;
+  const place: "above" | "below" = spaceAbove > 120 ? "above" : "below";
+  const x = Math.min(Math.max(pad, prefer.left - wrap.left - width / 2), wrap.width - width - pad);
+  const y =
+    place === "above"
+      ? Math.max(pad, prefer.top - wrap.top - 12)
+      : prefer.top - wrap.top + prefer.height + 10;
+  return { x, y, place };
+}
 
 export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: string; onChange: (v: string) => void; readOnly: boolean; autoFocus: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [selected, setSelected] = useState(false);
+  const [toolbar, setToolbar] = useState<Bubble | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -145,6 +180,34 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
     return () => clearTimeout(id);
   }, [autoFocus, readOnly]);
 
+  const placeToolbar = useCallback(() => {
+    const el = ref.current;
+    const wrap = wrapRef.current?.getBoundingClientRect();
+    if (!el || !wrap || readOnly || panel) {
+      setToolbar(null);
+      return;
+    }
+    const s = selection(el);
+    if (!s || s.start === s.end) {
+      setToolbar(null);
+      return;
+    }
+    const rect = selectionRect(el);
+    if (!rect || rect.width + rect.height === 0) {
+      setToolbar(null);
+      return;
+    }
+    const mid = rect.left + rect.width / 2;
+    const spaceAbove = rect.top - wrap.top;
+    const place: "above" | "below" = spaceAbove > 56 ? "above" : "below";
+    const barW = 280;
+    setToolbar({
+      x: Math.min(Math.max(8, mid - wrap.left - barW / 2), wrap.width - barW - 8),
+      y: place === "above" ? rect.top - wrap.top - 48 : rect.bottom - wrap.top + 10,
+      place,
+    });
+  }, [readOnly, panel]);
+
   const commit = (text: string, caret: number, selEnd?: number, record = true) => {
     const el = ref.current!;
     if (record) {
@@ -156,13 +219,7 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
     }
     paint(text, caret, selEnd);
     onChange(text);
-    check();
-  };
-
-  const check = () => {
-    const el = ref.current;
-    const s = el && selection(el);
-    setSelected(!!s && s.start !== s.end);
+    placeToolbar();
   };
 
   const replace = (start: number, end: number, text: string, selStart: number, selEnd: number) => {
@@ -175,39 +232,57 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
     const s = selection(el);
     if (!s) return;
     const v = readText(el);
-    const e = kind === "bold" ? wrapSelection(v, s.start, s.end, "**") : kind === "italic" ? wrapSelection(v, s.start, s.end, "_") : prefixLines(v, s.start, s.end, kind === "list" ? "- " : "> ");
+    const e =
+      kind === "bold"
+        ? wrapSelection(v, s.start, s.end, "**")
+        : kind === "italic"
+          ? wrapSelection(v, s.start, s.end, "_")
+          : prefixLines(v, s.start, s.end, kind === "list" ? "- " : "> ");
     el.focus();
     replace(e.start, e.end, e.text, e.selStart, e.selEnd);
+  };
+
+  const bubbleFromSelection = (): Bubble | null => {
+    const el = ref.current;
+    const wrap = wrapRef.current?.getBoundingClientRect();
+    if (!el || !wrap) return null;
+    const rect = selectionRect(el);
+    if (!rect) return null;
+    return clampBubble(wrap, { left: rect.left + rect.width / 2, top: rect.top, height: rect.height });
   };
 
   const openAi = () => {
     const el = ref.current!;
     const s = selection(el);
     if (!s || s.start === s.end) return;
+    const bubble = bubbleFromSelection() ?? { x: 16, y: 24, place: "below" as const };
     const v = readText(el);
     setError(null);
     setDraft("");
-    setPanel({ kind: "ai", start: s.start, end: s.end, quote: v.slice(s.start, s.end) });
+    setToolbar(null);
+    setPanel({ kind: "ai", start: s.start, end: s.end, quote: v.slice(s.start, s.end), bubble });
   };
 
   const openCommentNew = () => {
     const el = ref.current!;
     const s = selection(el);
     if (!s || s.start === s.end) return;
+    const bubble = bubbleFromSelection() ?? { x: 16, y: 24, place: "below" as const };
     const v = readText(el);
     setError(null);
     setDraft("");
-    setPanel({ kind: "comment-new", start: s.start, end: s.end, quote: v.slice(s.start, s.end) });
+    setToolbar(null);
+    setPanel({ kind: "comment-new", start: s.start, end: s.end, quote: v.slice(s.start, s.end), bubble });
   };
 
-  const runAi = async () => {
+  const runAi = async (instruction?: string) => {
     if (!panel || panel.kind !== "ai") return;
     setBusy(true);
     setError(null);
     try {
       const full = readText(ref.current!);
       const ctx = stripCommentMarkers(full).slice(Math.max(0, panel.start - 280), panel.end + 280);
-      const res = await notesApi.aiRewrite(panel.quote, draft.trim() || undefined, ctx);
+      const res = await notesApi.aiRewrite(panel.quote, (instruction ?? draft).trim() || undefined, ctx);
       const next = res.text;
       replace(panel.start, panel.end, next, panel.start, panel.start + next.length);
       setPanel(null);
@@ -223,7 +298,7 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
     if (!panel || panel.kind !== "comment-new") return;
     const body = draft.trim();
     if (!body) {
-      setError("Write a short comment first");
+      setError("Add a short comment");
       return;
     }
     const v = readText(ref.current!);
@@ -261,60 +336,87 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
     onChange(prev.v);
   };
 
-  // Hover / focus on highlighted comments → popover
+  const showCommentAt = useCallback((mark: HTMLElement, pinned = false) => {
+    const id = mark.dataset.commentId;
+    const body = mark.dataset.comment ?? "";
+    if (!id) return;
+    const wrap = wrapRef.current?.getBoundingClientRect();
+    const r = mark.getBoundingClientRect();
+    if (!wrap) return;
+    const bubble = clampBubble(wrap, { left: r.left + r.width / 2, top: r.top, height: r.height }, 280);
+    setToolbar(null);
+    setPanel({ kind: "comment-view", id, body, bubble, pinned });
+    setDraft(body);
+    setError(null);
+  }, []);
+
+  // Selection → floating toolbar
+  useEffect(() => {
+    const onSel = () => {
+      if (panel && panel.kind !== "comment-view") return;
+      // Delay so mobile selection handles settle
+      requestAnimationFrame(() => placeToolbar());
+    };
+    document.addEventListener("selectionchange", onSel);
+    return () => document.removeEventListener("selectionchange", onSel);
+  }, [placeToolbar, panel]);
+
+  // Hover / tap highlights
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
 
-    const show = (mark: HTMLElement) => {
-      const id = mark.dataset.commentId;
-      const body = mark.dataset.comment ?? "";
-      if (!id) return;
-      const wrap = wrapRef.current?.getBoundingClientRect();
-      const r = mark.getBoundingClientRect();
-      if (!wrap) return;
-      setPanel({
-        kind: "comment-view",
-        id,
-        body,
-        x: Math.min(Math.max(8, r.left - wrap.left), wrap.width - 260),
-        y: r.bottom - wrap.top + 8,
-      });
-      setDraft(body);
-      setError(null);
-    };
-
     const onOver = (e: Event) => {
-      const t = e.target as HTMLElement | null;
-      const mark = t?.closest?.(".note-hl") as HTMLElement | null;
+      if (panel && (panel.kind === "ai" || panel.kind === "comment-new" || panel.pinned)) return;
+      const mark = (e.target as HTMLElement | null)?.closest?.(".note-hl") as HTMLElement | null;
       if (!mark || !el.contains(mark)) return;
       if (hoverTimer.current) clearTimeout(hoverTimer.current);
-      hoverTimer.current = setTimeout(() => show(mark), 140);
+      hoverTimer.current = setTimeout(() => showCommentAt(mark, false), 120);
     };
     const onOut = (e: Event) => {
-      const t = e.target as HTMLElement | null;
-      const mark = t?.closest?.(".note-hl");
-      if (!mark) return;
+      const related = (e as MouseEvent).relatedTarget as HTMLElement | null;
+      if (related?.closest?.(".note-float") || related?.closest?.(".note-hl")) return;
       if (hoverTimer.current) clearTimeout(hoverTimer.current);
       hoverTimer.current = setTimeout(() => {
-        setPanel((p) => (p?.kind === "comment-view" ? null : p));
-      }, 220);
+        setPanel((p) => (p?.kind === "comment-view" && !p.pinned ? null : p));
+      }, 200);
     };
-    const onFocusIn = (e: FocusEvent) => {
+    const onClick = (e: MouseEvent) => {
       const mark = (e.target as HTMLElement | null)?.closest?.(".note-hl") as HTMLElement | null;
-      if (mark && el.contains(mark)) show(mark);
+      if (mark && el.contains(mark)) {
+        e.preventDefault();
+        showCommentAt(mark, true);
+      }
     };
 
     el.addEventListener("mouseover", onOver);
     el.addEventListener("mouseout", onOut);
-    el.addEventListener("focusin", onFocusIn);
+    el.addEventListener("click", onClick);
     return () => {
       el.removeEventListener("mouseover", onOver);
       el.removeEventListener("mouseout", onOut);
-      el.removeEventListener("focusin", onFocusIn);
+      el.removeEventListener("click", onClick);
       if (hoverTimer.current) clearTimeout(hoverTimer.current);
     };
-  }, [value, readOnly]);
+  }, [value, readOnly, panel, showCommentAt]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPanel(null);
+        setToolbar(null);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const panelStyle = (b: Bubble, width = 300): CSSProperties => ({
+    left: b.x,
+    top: b.place === "above" ? undefined : b.y,
+    bottom: b.place === "above" ? `calc(100% - ${b.y}px)` : undefined,
+    width: Math.min(width, (wrapRef.current?.clientWidth ?? 320) - 16),
+  });
 
   return (
     <div
@@ -327,34 +429,56 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
         }
       }}
     >
-      <div className="format-bar" data-visible={selected && !readOnly && !panel} role="toolbar" aria-label="Formatting">
-        {([["bold", Bold, "Bold"], ["italic", Italic, "Italic"], ["list", List, "Bulleted list"], ["quote", Quote, "Quote"]] as const).map(([k, Icon, label]) => (
-          <button key={k} className="icon-btn tiny" aria-label={label} tabIndex={selected ? 0 : -1} onMouseDown={(e) => e.preventDefault()} onClick={() => format(k)}>
-            <Icon size={14} strokeWidth={1.75} />
+      {toolbar && !panel && (
+        <div
+          className="note-toolbar"
+          role="toolbar"
+          aria-label="Selection actions"
+          style={{ left: toolbar.x, top: toolbar.y }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <div className="note-toolbar-group">
+            {([["bold", Bold, "Bold"], ["italic", Italic, "Italic"], ["list", List, "List"], ["quote", Quote, "Quote"]] as const).map(([k, Icon, label]) => (
+              <button key={k} type="button" className="note-toolbar-btn" aria-label={label} onClick={() => format(k)}>
+                <Icon size={15} strokeWidth={1.75} />
+              </button>
+            ))}
+          </div>
+          <span className="note-toolbar-sep" aria-hidden />
+          <button type="button" className="note-toolbar-action" onClick={openAi}>
+            <Sparkles size={14} strokeWidth={1.75} />
+            AI
           </button>
-        ))}
-        <span className="format-bar-sep" aria-hidden />
-        <button className="icon-btn tiny" aria-label="Rewrite with AI" title="Rewrite with AI" tabIndex={selected ? 0 : -1} onMouseDown={(e) => e.preventDefault()} onClick={openAi}>
-          <Sparkles size={14} strokeWidth={1.75} />
-        </button>
-        <button className="icon-btn tiny" aria-label="Add comment" title="Add comment" tabIndex={selected ? 0 : -1} onMouseDown={(e) => e.preventDefault()} onClick={openCommentNew}>
-          <MessageSquarePlus size={14} strokeWidth={1.75} />
-        </button>
-      </div>
+          <button type="button" className="note-toolbar-action" onClick={openCommentNew}>
+            <MessageSquarePlus size={14} strokeWidth={1.75} />
+            Comment
+          </button>
+        </div>
+      )}
+
+      {(panel?.kind === "ai" || panel?.kind === "comment-new") && (
+        <button type="button" className="note-sheet-scrim" aria-label="Dismiss" onClick={() => !busy && setPanel(null)} />
+      )}
 
       {panel?.kind === "ai" && (
-        <div className="note-float note-float--ai" role="dialog" aria-label="Rewrite with AI">
+        <div className="note-float note-float--sheet" role="dialog" aria-label="Rewrite with AI" style={panelStyle(panel.bubble, 320)}>
           <div className="note-float-head">
-            <Sparkles size={14} strokeWidth={1.75} />
-            <strong>Rewrite selection</strong>
-            <button type="button" className="icon-btn tiny" aria-label="Close" onClick={() => setPanel(null)}>
+            <span className="note-float-badge note-float-badge--ai"><Sparkles size={13} strokeWidth={1.75} /> AI rewrite</span>
+            <button type="button" className="icon-btn tiny" aria-label="Close" disabled={busy} onClick={() => setPanel(null)}>
               <X size={14} />
             </button>
           </div>
-          <p className="note-float-quote">{panel.quote.slice(0, 160)}{panel.quote.length > 160 ? "…" : ""}</p>
+          <p className="note-float-quote">“{panel.quote.slice(0, 140)}{panel.quote.length > 140 ? "…" : ""}”</p>
+          <div className="note-chip-row">
+            {AI_CHIPS.map((chip) => (
+              <button key={chip} type="button" className="note-chip" disabled={busy} onClick={() => void runAi(chip)}>
+                {chip}
+              </button>
+            ))}
+          </div>
           <input
             className="note-float-input"
-            placeholder="Optional: make shorter, fix tone…"
+            placeholder="Or describe the change…"
             value={draft}
             disabled={busy}
             autoFocus
@@ -364,66 +488,65 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
                 e.preventDefault();
                 void runAi();
               }
-              if (e.key === "Escape") setPanel(null);
             }}
           />
-          {error && <p className="note-float-error">{error}</p>}
+          {error && <p className="note-float-error" role="alert">{error}</p>}
           <div className="note-float-actions">
             <button type="button" className="link-btn" disabled={busy} onClick={() => setPanel(null)}>Cancel</button>
-            <button type="button" className="btn-primary asst-confirm-btn" disabled={busy} onClick={() => void runAi()}>
+            <button type="button" className="btn-primary note-float-primary" disabled={busy} onClick={() => void runAi()}>
               {busy ? <Loader2 size={15} className="asst-spin" /> : <Sparkles size={15} strokeWidth={1.75} />}
-              Rewrite
+              {busy ? "Rewriting…" : "Rewrite"}
             </button>
           </div>
         </div>
       )}
 
       {panel?.kind === "comment-new" && (
-        <div className="note-float note-float--ai" role="dialog" aria-label="Add comment">
+        <div className="note-float note-float--sheet" role="dialog" aria-label="Add comment" style={panelStyle(panel.bubble, 300)}>
           <div className="note-float-head">
-            <MessageSquarePlus size={14} strokeWidth={1.75} />
-            <strong>Comment</strong>
+            <span className="note-float-badge"><MessageSquare size={13} strokeWidth={1.75} /> Comment</span>
             <button type="button" className="icon-btn tiny" aria-label="Close" onClick={() => setPanel(null)}>
               <X size={14} />
             </button>
           </div>
-          <p className="note-float-quote">{panel.quote.slice(0, 160)}{panel.quote.length > 160 ? "…" : ""}</p>
+          <p className="note-float-quote">“{panel.quote.slice(0, 120)}{panel.quote.length > 120 ? "…" : ""}”</p>
           <textarea
             className="note-float-input note-float-textarea"
-            placeholder="Add a note on this highlight…"
+            placeholder="What should you remember about this?"
             rows={3}
             value={draft}
             autoFocus
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Escape") setPanel(null);
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 saveComment();
               }
             }}
           />
-          {error && <p className="note-float-error">{error}</p>}
+          {error && <p className="note-float-error" role="alert">{error}</p>}
           <div className="note-float-actions">
             <button type="button" className="link-btn" onClick={() => setPanel(null)}>Cancel</button>
-            <button type="button" className="btn-primary asst-confirm-btn" onClick={saveComment}>Save comment</button>
+            <button type="button" className="btn-primary note-float-primary" onClick={saveComment}>Save comment</button>
           </div>
         </div>
       )}
 
       {panel?.kind === "comment-view" && (
         <div
-          className="note-float note-float--hover"
+          className={`note-float note-float--bubble note-float--${panel.bubble.place}`}
           role="dialog"
           aria-label="Comment"
-          style={{ left: panel.x, top: panel.y }}
+          style={panelStyle(panel.bubble, 280)}
           onMouseEnter={() => {
             if (hoverTimer.current) clearTimeout(hoverTimer.current);
           }}
           onMouseLeave={() => {
-            hoverTimer.current = setTimeout(() => setPanel(null), 180);
+            if (panel.pinned) return;
+            hoverTimer.current = setTimeout(() => setPanel(null), 160);
           }}
         >
+          <div className="note-float-caret" aria-hidden />
           {readOnly ? (
             <p className="note-float-body">{panel.body}</p>
           ) : (
@@ -432,7 +555,9 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
                 className="note-float-input note-float-textarea"
                 rows={3}
                 value={draft}
+                aria-label="Edit comment"
                 onChange={(e) => setDraft(e.target.value)}
+                onFocus={() => setPanel((p) => (p?.kind === "comment-view" ? { ...p, pinned: true } : p))}
               />
               <div className="note-float-actions">
                 <button type="button" className="icon-btn tiny" aria-label="Delete comment" onClick={deleteComment}>
@@ -440,7 +565,7 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
                 </button>
                 <span className="grow" />
                 <button type="button" className="link-btn" onClick={() => setPanel(null)}>Close</button>
-                <button type="button" className="btn-primary asst-confirm-btn" onClick={saveCommentEdit}>Save</button>
+                <button type="button" className="btn-primary note-float-primary" onClick={saveCommentEdit}>Save</button>
               </div>
             </>
           )}
@@ -453,7 +578,7 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
         role="textbox"
         aria-multiline="true"
         aria-label="Task notes"
-        data-placeholder="Start writing…"
+        data-placeholder="Start writing… Select text for AI or comments"
         data-empty="true"
         contentEditable={readOnly ? false : "plaintext-only"}
         suppressContentEditableWarning
@@ -470,9 +595,12 @@ export function NotesEditor({ value, onChange, readOnly, autoFocus }: { value: s
           const s = selection(e.currentTarget);
           if (s) replace(s.start, s.end, t, s.start + t.length, s.start + t.length);
         }}
-        onKeyUp={check}
-        onMouseUp={check}
-        onBlur={() => setTimeout(check, 120)}
+        onKeyUp={() => placeToolbar()}
+        onMouseUp={() => placeToolbar()}
+        onTouchEnd={() => setTimeout(placeToolbar, 50)}
+        onBlur={() => setTimeout(() => {
+          if (!panel) setToolbar(null);
+        }, 160)}
         onKeyDown={(e) => {
           const el = e.currentTarget;
           const mod = e.metaKey || e.ctrlKey;

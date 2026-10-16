@@ -270,52 +270,118 @@ input, textarea { font: inherit; color: inherit; }
 .editor-area strong { font-weight: 650; }
 .editor-area code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; background: rgba(37,41,44,0.06); border-radius: 4px; padding: 1px 4px; }
 
-.format-bar { position: absolute; top: -34px; right: 0; display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); background: var(--editor); border-radius: 999px; opacity: 0; transform: translateY(4px); pointer-events: none; transition: opacity 0.18s, transform 0.18s var(--ease); z-index: 2; }
-.format-bar-sep { width: 1px; height: 14px; background: var(--line); margin: 0 3px; align-self: center; }
+/* Selection bubble toolbar (Notion-style, anchored to highlight) */
+.note-toolbar {
+  position: absolute; z-index: 14;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px; border-radius: 12px;
+  background: #2a2926; border: 1px solid rgba(244,241,234,0.12);
+  box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+  animation: note-pop 0.16s var(--ease);
+}
+.note-toolbar-group { display: inline-flex; gap: 1px; }
+.note-toolbar-btn {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: grid; place-items: center; color: var(--ink-2);
+  transition: background 0.15s, color 0.15s;
+}
+.note-toolbar-btn:hover { background: rgba(255,255,255,0.06); color: var(--ink); }
+.note-toolbar-sep { width: 1px; height: 18px; background: rgba(244,241,234,0.12); margin: 0 2px; }
+.note-toolbar-action {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 10px; border-radius: 8px;
+  font-size: 12.5px; font-weight: 550; color: var(--ink);
+  transition: background 0.15s;
+}
+.note-toolbar-action:hover { background: rgba(255,255,255,0.06); }
 
 .editor-area .note-hl {
-  background: rgba(244, 241, 234, 0.14);
-  border-bottom: 1.5px solid rgba(244, 241, 234, 0.45);
+  background: rgba(212, 168, 75, 0.18);
+  border-bottom: 1.5px solid rgba(212, 168, 75, 0.55);
   border-radius: 3px;
   padding: 0 1px;
-  cursor: help;
+  cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 .editor-area .note-hl:hover,
 .editor-area .note-hl:focus {
-  background: rgba(244, 241, 234, 0.22);
-  border-bottom-color: rgba(244, 241, 234, 0.75);
+  background: rgba(212, 168, 75, 0.28);
+  border-bottom-color: rgba(212, 168, 75, 0.9);
   outline: none;
 }
 
+.note-sheet-scrim {
+  position: absolute; inset: 0; z-index: 11;
+  background: rgba(0,0,0,0.28); border: 0; cursor: pointer;
+}
+
 .note-float {
-  position: absolute; z-index: 12; width: min(300px, calc(100% - 16px));
-  padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line);
-  background: var(--editor); box-shadow: 0 14px 36px rgba(0,0,0,0.35);
+  position: absolute; z-index: 15;
+  padding: 14px; border-radius: 16px;
+  border: 1px solid rgba(244,241,234,0.12);
+  background: #242320;
+  box-shadow: 0 18px 44px rgba(0,0,0,0.5);
   display: flex; flex-direction: column; gap: 10px;
+  animation: note-pop 0.18s var(--ease);
 }
-.note-float--ai { top: 8px; right: 0; }
-.note-float--hover { position: absolute; }
-.note-float-head {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 12.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-2);
+.note-float--sheet { max-width: calc(100% - 16px); }
+.note-float--bubble { max-width: calc(100% - 16px); }
+.note-float-caret {
+  position: absolute; width: 10px; height: 10px;
+  background: #242320; border-left: 1px solid rgba(244,241,234,0.12);
+  border-top: 1px solid rgba(244,241,234,0.12);
+  left: 24px; transform: rotate(45deg);
 }
-.note-float-head strong { flex: 1; color: var(--ink); font-size: 13px; letter-spacing: 0; text-transform: none; font-weight: 600; }
+.note-float--below .note-float-caret { top: -5px; }
+.note-float--above .note-float-caret {
+  bottom: -5px; top: auto;
+  border-left: 0; border-top: 0;
+  border-right: 1px solid rgba(244,241,234,0.12);
+  border-bottom: 1px solid rgba(244,241,234,0.12);
+}
+.note-float-head { display: flex; align-items: center; gap: 8px; }
+.note-float-badge {
+  flex: 1; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--ink-2);
+}
+.note-float-badge--ai { color: #e8c56a; }
 .note-float-quote {
-  margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink-2);
-  padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.04);
-  max-height: 72px; overflow: hidden;
+  margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink-2);
+  padding: 9px 11px; border-radius: 10px; background: rgba(255,255,255,0.04);
+  max-height: 64px; overflow: hidden; font-style: italic;
 }
-.note-float-body { margin: 0; font-size: 14px; line-height: 1.45; color: var(--ink); white-space: pre-wrap; }
+.note-float-body { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; }
 .note-float-input {
-  width: 100%; background: transparent; border: 1px solid var(--line); border-radius: 10px;
-  padding: 9px 11px; font-size: 14px; color: var(--ink);
+  width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--line); border-radius: 11px;
+  padding: 10px 12px; font-size: 14px; color: var(--ink);
 }
-.note-float-input:focus { outline: none; border-color: var(--ink-3); }
-.note-float-textarea { resize: vertical; min-height: 72px; line-height: 1.4; }
-.note-float-error { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.note-float-input:focus { outline: none; border-color: rgba(212,168,75,0.45); }
+.note-float-textarea { resize: vertical; min-height: 76px; line-height: 1.45; }
+.note-float-error { margin: 0; font-size: 12.5px; color: #c9a27a; }
 .note-float-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
-.format-bar[data-visible="true"] { opacity: 1; transform: none; pointer-events: auto; }
+.note-float-primary { height: 36px; padding: 0 14px; font-size: 13px; gap: 7px; display: inline-flex; align-items: center; }
+.note-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.note-chip {
+  height: 28px; padding: 0 10px; border-radius: 999px;
+  font-size: 12px; color: var(--ink-2);
+  background: rgba(255,255,255,0.04); border: 1px solid var(--line);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.note-chip:hover:not(:disabled) { color: var(--ink); border-color: rgba(212,168,75,0.4); background: rgba(212,168,75,0.08); }
+.note-chip:disabled { opacity: 0.45; }
+
+@keyframes note-pop {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 560px) {
+  .note-toolbar { max-width: calc(100% - 16px); overflow-x: auto; }
+  .note-float--sheet {
+    left: 8px !important; right: 8px; width: auto !important;
+    bottom: max(12px, env(safe-area-inset-bottom)); top: auto !important;
+  }
+}
 
 /* responsive */
 @container focus (max-width: 760px) {
