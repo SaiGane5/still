@@ -7,12 +7,17 @@ export function notificationSupport(): NotifyPermission {
   return Notification.permission;
 }
 
-/** Ask for permission (no-op if already granted/denied/unsupported). */
+/**
+ * Ask for permission. Must be called from a click/tap handler — browsers (esp. Safari)
+ * reject prompts that are not tied to a user gesture.
+ */
 export async function ensureNotificationPermission(): Promise<NotifyPermission> {
   const current = notificationSupport();
   if (current !== "default") return current;
   try {
-    return await Notification.requestPermission();
+    const result = Notification.requestPermission();
+    // Older Safari used a callback API; modern returns a Promise.
+    return await Promise.resolve(result as Promise<NotificationPermission> | NotificationPermission);
   } catch {
     return notificationSupport();
   }

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
-import { ensureNotificationPermission, notifyTimeUp } from "./notify";
+import { notifyTimeUp } from "./notify";
 import { playAlarm, playTick, unlockAudio } from "./sounds";
 
 /**
@@ -20,12 +20,8 @@ export function useTimerFeedback(opts: {
   const prevSeconds = useRef<number | null>(null);
   const alarmedFor = useRef<string | null>(null);
 
-  // Unlock audio + (optionally) ask for notifications when the user enables sound.
-  useEffect(() => {
-    if (!soundEnabled) return;
-    unlockAudio();
-    void ensureNotificationPermission();
-  }, [soundEnabled]);
+  // Do not prompt for notifications on mount — Safari throws without a user gesture
+  // and that error can stall the load UI. Permission is requested from mute/settings clicks.
 
   // Soft tick on each whole-second change while counting down.
   useEffect(() => {
