@@ -13,12 +13,13 @@ import { notifyTimeUp } from "./notify";
 import { playAlarm, stopAlarm, unlockAudio } from "./sounds";
 
 /**
- * Alarm + notification + extend prompt on expiry only (no per-second ticks).
- * Keeps a silent ongoing Android notification with live remaining time and pause/resume actions.
+ * Alarm on expiry only. Native MediaStyle notification is updated on state changes
+ * (not every tick) — Android's chronometer handles live countdown without flicker.
  */
 export function useTimerFeedback(opts: {
   soundEnabled: boolean;
   seconds: number;
+  plannedSeconds: number;
   running: boolean;
   expired: boolean;
   taskId: string | null;
@@ -27,13 +28,30 @@ export function useTimerFeedback(opts: {
   onTimeUp?: () => void;
   onNotificationAction?: (action: TimerNotificationAction) => void;
 }) {
-  const { soundEnabled, seconds, running, expired, taskId, taskTitle, seedKey, onTimeUp, onNotificationAction } = opts;
+  const {
+    soundEnabled,
+    seconds,
+    plannedSeconds,
+    running,
+    expired,
+    taskId,
+    taskTitle,
+    seedKey,
+    onTimeUp,
+    onNotificationAction,
+  } = opts;
   const alarmedFor = useRef<string | null>(null);
   const onTimeUpRef = useRef(onTimeUp);
   const onActionRef = useRef(onNotificationAction);
   onTimeUpRef.current = onTimeUp;
   onActionRef.current = onNotificationAction;
-  const lastPosted = useRef<{ seconds: number; running: boolean; title: string } | null>(null);
+  const lastSync = useRef<{
+    taskId: string;
+    title: string;
+    running: boolean;
+    seconds: number;
+    planned: number;
+  } | null>(null);
 
   useEffect(() => {
     installNativeTimerActionListener();
@@ -48,36 +66,55 @@ export function useTimerFeedback(opts: {
     return () => window.removeEventListener("still:timer-action", onAction);
   }, []);
 
-  // Ongoing notification — update in place; never clear while a focus task is active.
+  // Persistent now-playing card — sync only when status meaningfully changes.
   useEffect(() => {
     if (!isNativeApp()) return;
-    if (!taskId) {
-      lastPosted.current = null;
-      void clearFocusNotification();
-      return;
-    }
-    if (expired || seconds <= 0) return;
 
-    const prev = lastPosted.current;
-    // Always refresh running clock; while paused only refresh if state/title changed.
-    if (prev && !running && prev.running === running && prev.seconds === seconds && prev.title === taskTitle) {
+    if (!taskId || expired || seconds <= 0) {
+      lastSync.current = null;
+      if (!taskId || expired) void clearFocusNotification();
       return;
     }
+
+    const prev = lastSync.current;
+    const jumped = !!prev && Math.abs(prev.seconds - seconds) > 2; // extend / seek
+    const stateChanged =
+      !prev ||
+      prev.taskId !== taskId ||
+      prev.title !== taskTitle ||
+      prev.running !== running ||
+      prev.planned !== plannedSeconds;
+
+    // While running, chronometer ticks natively — skip per-second JS updates.
+    if (!stateChanged && !jumped && running) return;
+    if (!stateChanged && !jumped && !running && prev?.seconds === seconds) return;
+
+    lastSync.current = {
+      taskId,
+      title: taskTitle,
+      running,
+      seconds,
+      planned: plannedSeconds,
+    };
 
     void ensureNativeNotificationPermission().then((ok) => {
       if (!ok) return;
-      lastPosted.current = { seconds, running, title: taskTitle };
-      void updateFocusNotification({ title: taskTitle, seconds, running });
+      void updateFocusNotification({
+        title: taskTitle,
+        seconds,
+        plannedSeconds: plannedSeconds || seconds,
+        running,
+      });
     });
-  }, [taskId, taskTitle, seconds, running, expired]);
+  }, [taskId, taskTitle, seconds, plannedSeconds, running, expired]);
 
-  // One alarm + notification + extend prompt per expired task seed.
+  // One alarm + time-up notice per expired task seed.
   useEffect(() => {
     if (!expired || !taskId || seedKey == null) return;
     const key = `${taskId}:${seedKey}`;
     if (alarmedFor.current === key) return;
     alarmedFor.current = key;
-    lastPosted.current = null;
+    lastSync.current = null;
     if (soundEnabled) {
       unlockAudio();
       playAlarm(5_000);
@@ -87,7 +124,6 @@ export function useTimerFeedback(opts: {
     onTimeUpRef.current?.();
   }, [expired, taskId, seedKey, soundEnabled, taskTitle]);
 
-  // Stop looping alarm if the user extends / leaves expiry.
   useEffect(() => {
     if (!expired) stopAlarm();
   }, [expired]);

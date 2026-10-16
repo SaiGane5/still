@@ -1,8 +1,11 @@
 /**
  * Capacitor / native bridge helpers. Safe no-ops on the regular web.
+ *
+ * Focus countdown uses a native foreground MediaStyle notification (Spotify-like)
+ * so the shade entry updates in place — never cancel/reschedule flicker.
  */
 
-import { formatClock } from "@/lib/timer";
+import { FocusTimer } from "./focus-timer-plugin";
 
 export function isNativeApp(): boolean {
   if (typeof window === "undefined") return false;
@@ -10,160 +13,66 @@ export function isNativeApp(): boolean {
   return !!cap?.isNativePlatform?.();
 }
 
-const ONGOING_ID = 71001;
-const DONE_ID = 71002;
-const FOCUS_CHANNEL = "still-focus-silent";
-const ALARM_CHANNEL = "still-alarm";
-const ACTION_TYPE = "FOCUS_CONTROLS";
-
-let channelsReady = false;
-let actionsReady = false;
-let actionListenerInstalled = false;
-/** True once we've successfully posted the ongoing focus notification. */
-let focusPosted = false;
-
 export type TimerNotificationAction = "pause" | "resume";
 
-async function ensureChannels(): Promise<void> {
-  if (channelsReady) return;
-  const { LocalNotifications } = await import("@capacitor/local-notifications");
-  // Silent channel for live countdown — no sound/vibration on each refresh.
-  await LocalNotifications.createChannel({
-    id: FOCUS_CHANNEL,
-    name: "Focus timer",
-    description: "Live countdown while focusing",
-    importance: 3,
-    visibility: 1,
-    sound: undefined,
-    vibration: false,
-    lights: false,
-  });
-  await LocalNotifications.createChannel({
-    id: ALARM_CHANNEL,
-    name: "Timer finished",
-    description: "Plays when a focus session ends",
-    importance: 5,
-    visibility: 1,
-    sound: "alarm.wav",
-    vibration: true,
-  });
-  channelsReady = true;
-}
+let actionListenerInstalled = false;
+let permissionAsked = false;
 
-async function ensureActionTypes(): Promise<void> {
-  if (actionsReady) return;
-  const { LocalNotifications } = await import("@capacitor/local-notifications");
-  await LocalNotifications.registerActionTypes({
-    types: [
-      {
-        id: ACTION_TYPE,
-        actions: [
-          { id: "pause", title: "Pause", foreground: true },
-          { id: "resume", title: "Resume", foreground: true },
-        ],
-      },
-    ],
-  });
-  actionsReady = true;
-}
-
-/** Listen for Pause / Resume from the ongoing notification. Call once on boot. */
+/** Listen for Pause / Resume from the ongoing MediaStyle notification. */
 export function installNativeTimerActionListener(): void {
   if (!isNativeApp() || actionListenerInstalled) return;
   actionListenerInstalled = true;
-  void (async () => {
-    try {
-      await ensureActionTypes();
-      const { LocalNotifications } = await import("@capacitor/local-notifications");
-      await LocalNotifications.addListener("localNotificationActionPerformed", (event) => {
-        const action = event.actionId;
-        if (action === "pause" || action === "resume") {
-          window.dispatchEvent(new CustomEvent<TimerNotificationAction>("still:timer-action", { detail: action }));
-        }
-      });
-    } catch (e) {
-      console.warn("native timer action listener failed", e);
+  void FocusTimer.addListener("timerAction", (event) => {
+    const action = event?.action;
+    if (action === "pause" || action === "resume") {
+      window.dispatchEvent(new CustomEvent<TimerNotificationAction>("still:timer-action", { detail: action }));
     }
-  })();
+  }).catch((e) => console.warn("focus timer listener failed", e));
 }
 
 export async function ensureNativeNotificationPermission(): Promise<boolean> {
   if (!isNativeApp()) return false;
+  // POST_NOTIFICATIONS is requested via LocalNotifications once; FocusTimer itself
+  // posts through NotificationManager after the user grants.
+  if (permissionAsked) return true;
   try {
     const { LocalNotifications } = await import("@capacitor/local-notifications");
     const cur = await LocalNotifications.checkPermissions();
     if (cur.display === "granted") {
-      await ensureChannels();
-      await ensureActionTypes();
+      permissionAsked = true;
       return true;
     }
     const req = await LocalNotifications.requestPermissions();
-    if (req.display === "granted") {
-      await ensureChannels();
-      await ensureActionTypes();
-      return true;
-    }
-    return false;
+    permissionAsked = req.display === "granted";
+    return permissionAsked;
   } catch {
-    return false;
+    return true; // best-effort; older Android doesn't need runtime grant
   }
 }
 
-function focusPayload(opts: { title: string; seconds: number; running: boolean }) {
-  const clock = formatClock(opts.seconds);
-  const body = opts.running ? `${clock} remaining` : `Paused · ${clock} left`;
-  return {
-    id: ONGOING_ID,
-    title: opts.title || "still.",
-    body,
-    largeBody: body,
-    summaryText: opts.running ? "Focusing" : "Paused",
-    channelId: FOCUS_CHANNEL,
-    actionTypeId: ACTION_TYPE,
-    ongoing: true,
-    autoCancel: false,
-    // Empty sound — channel is silent; never play on refresh.
-    sound: undefined,
-    extra: { kind: "focus-progress", running: opts.running },
-    // Immediate post (not a future AlarmManager one-shot that can vanish).
-    schedule: { at: new Date(Date.now() + 10) },
-  };
-}
-
 /**
- * Ongoing status-bar notification with remaining focus time.
- * Uses update() after the first post so the shade entry stays put.
+ * Update the persistent now-playing focus card.
+ * Call only on start / pause / resume / extend / retitle — not every tick.
+ * While running, Android's chronometer counts down inside the notification.
  */
 export async function updateFocusNotification(opts: {
   title: string;
   seconds: number;
+  plannedSeconds: number;
   running: boolean;
 }): Promise<void> {
   if (!isNativeApp()) return;
   try {
-    const { LocalNotifications } = await import("@capacitor/local-notifications");
-    await ensureChannels();
-    await ensureActionTypes();
-
     if (opts.seconds <= 0) {
-      focusPosted = false;
-      await LocalNotifications.cancel({ notifications: [{ id: ONGOING_ID }] });
+      await FocusTimer.stop();
       return;
     }
-
-    const payload = focusPayload(opts);
-
-    if (focusPosted) {
-      try {
-        await LocalNotifications.update({ notifications: [payload] });
-        return;
-      } catch {
-        // Fall through to schedule if update isn't available / notification gone.
-      }
-    }
-
-    await LocalNotifications.schedule({ notifications: [payload] });
-    focusPosted = true;
+    await FocusTimer.update({
+      title: opts.title || "still.",
+      seconds: Math.max(0, Math.floor(opts.seconds)),
+      plannedSeconds: Math.max(1, Math.floor(opts.plannedSeconds || opts.seconds)),
+      running: opts.running,
+    });
   } catch (e) {
     console.warn("focus notification update failed", e);
   }
@@ -172,43 +81,36 @@ export async function updateFocusNotification(opts: {
 export async function clearFocusNotification(): Promise<void> {
   if (!isNativeApp()) return;
   try {
-    const { LocalNotifications } = await import("@capacitor/local-notifications");
-    focusPosted = false;
-    await LocalNotifications.cancel({ notifications: [{ id: ONGOING_ID }, { id: DONE_ID }] });
-    try {
-      await LocalNotifications.removeDeliveredNotificationsById?.({ ids: [ONGOING_ID, DONE_ID] });
-    } catch {
-      /* older plugin */
-    }
+    await FocusTimer.stop();
   } catch {
     /* ignore */
   }
 }
 
-/** High-priority “time’s up” notification (alarm channel only — no tick/refresh sounds). */
+/** Time-up shade notice (non-ongoing). WebView plays the alarm audio. */
 export async function notifyNativeTimeUp(title: string): Promise<void> {
   if (!isNativeApp()) return;
   try {
+    await FocusTimer.stop();
     const { LocalNotifications } = await import("@capacitor/local-notifications");
-    await ensureChannels();
-    focusPosted = false;
-    await LocalNotifications.cancel({ notifications: [{ id: ONGOING_ID }] });
-    try {
-      await LocalNotifications.removeDeliveredNotificationsById?.({ ids: [ONGOING_ID] });
-    } catch {
-      /* ignore */
-    }
-    // Silent alert in the shade — the WebView plays the 5s alarm once to avoid double sound.
+    await LocalNotifications.createChannel({
+      id: "still-alarm",
+      name: "Timer finished",
+      description: "Alert when a focus session ends",
+      importance: 5,
+      sound: undefined,
+      vibration: true,
+    }).catch(() => {});
     await LocalNotifications.schedule({
       notifications: [
         {
-          id: DONE_ID,
+          id: 71002,
           title: "still. — time’s up",
           body: title ? `“${title}” finished. Extend or complete?` : "Your focus session finished.",
-          channelId: FOCUS_CHANNEL,
+          channelId: "still-alarm",
           ongoing: false,
           autoCancel: true,
-          schedule: { at: new Date(Date.now() + 10) },
+          schedule: { at: new Date(Date.now() + 50) },
           extra: { kind: "focus-done" },
         },
       ],

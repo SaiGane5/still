@@ -37,6 +37,7 @@ export function AppShell() {
   useTimerFeedback({
     soundEnabled: settings.soundEnabled,
     seconds: timer.seconds,
+    plannedSeconds: head?.plannedSeconds ?? timer.seconds,
     running: timer.running,
     expired: timer.expired,
     taskId: head?.id ?? null,
