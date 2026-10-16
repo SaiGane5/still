@@ -1,10 +1,10 @@
 :root {
-  --bg: #f4f1ea;
-  --ink: #25292c;
-  --ink-2: #858585;
-  --ink-3: #b9b9b5;
+  --bg: #1d1c1a;
+  --ink: #ffffff;
+  --ink-2: #868686;
+  --ink-3: #bdbdbd;
   --line: #deddd7;
-  --editor: #f8f6f0;
+  --editor: #1d1c1a;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --sans: var(--font-geist-sans), Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
