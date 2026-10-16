@@ -2,13 +2,17 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ensureNativeNotificationPermission, isNativeApp } from "@/client/native";
 import { flushAllKeepalive, hasUnsavedNotes } from "@/client/notesRegistry";
 import { useFocusTimer } from "@/client/useFocusTimer";
 import { useSettings, useStill, type TimerReading } from "@/client/useStill";
 import { useTimerFeedback } from "@/client/useTimerFeedback";
 import type { Task } from "@/lib/types";
+import { Assistant } from "./Assistant";
 import { DailyProgress } from "./DailyProgress";
+import { ExtendTimerSheet } from "./ExtendTimerSheet";
 import { FocusView } from "./FocusView";
+import { FullscreenTimer } from "./FullscreenTimer";
 import { Header } from "./Header";
 import { TaskComposer } from "./TaskComposer";
 import { TaskNotesSidebar } from "./TaskNotesSidebar";
@@ -23,6 +27,13 @@ export function AppShell() {
   const timer = useFocusTimer(seed, head?.plannedSeconds ?? 0);
   readRef.current = timer.read;
 
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesUnsafe, setNotesUnsafe] = useState(false);
+  const [composer, setComposer] = useState<{ open: boolean; task: Task | null }>({ open: false, task: null });
+  const [confirmDelete, setConfirmDelete] = useState<Task | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [extendOpen, setExtendOpen] = useState(false);
+
   useTimerFeedback({
     soundEnabled: settings.soundEnabled,
     seconds: timer.seconds,
@@ -31,25 +42,37 @@ export function AppShell() {
     taskId: head?.id ?? null,
     taskTitle: head?.title ?? "",
     seedKey: seed?.key ?? null,
+    onTimeUp: () => setExtendOpen(true),
   });
 
-  const [notesOpen, setNotesOpen] = useState(false);
-  const [notesUnsafe, setNotesUnsafe] = useState(false);
-  const [composer, setComposer] = useState<{ open: boolean; task: Task | null }>({ open: false, task: null });
-  const [confirmDelete, setConfirmDelete] = useState<Task | null>(null);
+  // Ask for notification permission once inside the native shell (user-gesture friendly: first resume).
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    const ask = () => void ensureNativeNotificationPermission();
+    window.addEventListener("pointerdown", ask, { once: true });
+    return () => window.removeEventListener("pointerdown", ask);
+  }, []);
 
-  // Esc closes notes only when nothing is unsaved-with-error and no dialog is open
+  // Esc closes notes / fullscreen / extend
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented || !notesOpen || composer.open || confirmDelete) return;
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (extendOpen) {
+        setExtendOpen(false);
+        return;
+      }
+      if (fullscreen) {
+        setFullscreen(false);
+        return;
+      }
+      if (!notesOpen || composer.open || confirmDelete) return;
       if (notesUnsafe) return;
       setNotesOpen(false);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [notesOpen, notesUnsafe, composer.open, confirmDelete]);
+  }, [notesOpen, notesUnsafe, composer.open, confirmDelete, fullscreen, extendOpen]);
 
-  // last-chance protection for notes
   useEffect(() => {
     const onHide = () => flushAllKeepalive();
     const onBefore = (e: BeforeUnloadEvent) => {
@@ -76,16 +99,26 @@ export function AppShell() {
     return () => clearTimeout(id);
   }, [still.toast, still.dismissToast]);
 
-  // closing notes when the queue empties
   useEffect(() => {
-    if (state && !head) setNotesOpen(false);
+    if (state && !head) {
+      setNotesOpen(false);
+      setFullscreen(false);
+      setExtendOpen(false);
+    }
   }, [state, head]);
+
+  // Auto-enter fullscreen on narrow / native when a timer is running
+  useEffect(() => {
+    if (!head) return;
+    const narrow = typeof window !== "undefined" && window.matchMedia("(max-width: 720px)").matches;
+    if ((isNativeApp() || narrow) && timer.running && !timer.expired) setFullscreen(true);
+  }, [head?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- only on task change
 
   const openAdd = () => setComposer({ open: true, task: null });
   const closeComposer = useCallback(() => setComposer((c) => ({ ...c, open: false })), []);
 
   return (
-    <div className="shell">
+    <div className="shell" data-fullscreen={fullscreen || undefined}>
       <div className="main">
         <Header settings={settings} onSettings={updateSettings} />
         {!state ? (
@@ -113,11 +146,17 @@ export function AppShell() {
             onDelete={setConfirmDelete}
             onAdd={openAdd}
             onMove={still.move}
+            onFullscreen={head ? () => setFullscreen(true) : undefined}
           />
         )}
         <footer className="footer">
-          {state ? <DailyProgress progress={state.progress} /> : <span />}
-          <button className="text-btn" onClick={openAdd} disabled={!state}>Add task <Plus size={15} strokeWidth={1.5} /></button>
+          <div className="footer-progress">
+            {state ? <DailyProgress progress={state.progress} /> : null}
+          </div>
+          <button className="text-btn footer-add" onClick={openAdd} disabled={!state}>
+            Add task <Plus size={15} strokeWidth={1.5} />
+          </button>
+          <div className="footer-spacer" aria-hidden />
         </footer>
       </div>
 
@@ -132,6 +171,40 @@ export function AppShell() {
           if (composer.task) await still.edit(composer.task.id, v);
           else await still.add(v);
         }}
+      />
+
+      <AnimatePresence>
+        {fullscreen && head && (
+          <motion.div
+            key="fs"
+            className="fs-timer-root"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.22 }}
+          >
+            <FullscreenTimer
+              title={head.title}
+              seconds={timer.seconds}
+              fraction={timer.fraction}
+              running={timer.running}
+              expired={timer.expired}
+              onToggle={timer.toggle}
+              onExit={() => setFullscreen(false)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <ExtendTimerSheet
+        open={extendOpen && !!head}
+        title={head?.title ?? "this task"}
+        onExtend={(secs) => {
+          timer.extend(secs, true);
+          setExtendOpen(false);
+          setFullscreen(true);
+        }}
+        onDismiss={() => setExtendOpen(false)}
       />
 
       <AnimatePresence>
@@ -158,6 +231,15 @@ export function AppShell() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {!fullscreen && (
+        <Assistant
+          onQueued={(s) => {
+            still.applyRemote(s);
+            still.setToast(`Added to your queue`);
+          }}
+        />
+      )}
     </div>
   );
 }

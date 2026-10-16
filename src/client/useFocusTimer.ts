@@ -100,6 +100,26 @@ export function useFocusTimer(seed: Seed | null, plannedSeconds: number) {
     void sync();
   }, [sync]);
 
+  /** Add more focus time (e.g. after expiry) and optionally start running. */
+  const extend = useCallback(
+    (extraSeconds: number, start = true) => {
+      unlockAudio();
+      const t = Date.now();
+      const cur = live.current.snap;
+      const left = remainingSeconds(cur, t);
+      const next: TimerSnap = {
+        remainingMs: (left + Math.max(0, extraSeconds)) * 1000,
+        anchorAt: t,
+        running: start,
+      };
+      live.current.snap = next;
+      setSnap(next);
+      setNow(t);
+      void sync();
+    },
+    [sync],
+  );
+
   const secs = remainingSeconds(snap, now || Date.now());
   return {
     seconds: secs,
@@ -107,6 +127,7 @@ export function useFocusTimer(seed: Seed | null, plannedSeconds: number) {
     running: snap.running,
     expired: secs <= 0,
     toggle,
+    extend,
     read,
   };
 }

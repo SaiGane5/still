@@ -1,12 +1,15 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
+import { LogIn, LogOut } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { ensureNotificationPermission } from "@/client/notify";
 import { unlockAudio } from "@/client/sounds";
+import { useAuth } from "@/client/useAuth";
 import type { Settings } from "@/client/useStill";
 
 export function SettingsPopover({ open, onClose, settings, onChange }: { open: boolean; onClose: () => void; settings: Settings; onChange: (p: Partial<Settings>) => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  const { user, googleEnabled, loaded, logout } = useAuth();
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -59,6 +62,32 @@ export function SettingsPopover({ open, onClose, settings, onChange }: { open: b
             />
           </label>
           <p className="muted settings-hint">Ticks while focusing, chime and a notification when time is up.</p>
+          {loaded && (user?.signedIn || googleEnabled) && (
+            <div className="settings-account">
+              {user?.signedIn ? (
+                <>
+                  <p className="account-name">{user.displayName || user.email || "Signed in"}</p>
+                  {user.email && user.displayName && <p className="muted account-email">{user.email}</p>}
+                  <button
+                    type="button"
+                    className="account-action"
+                    onClick={() => {
+                      onClose();
+                      void logout();
+                    }}
+                  >
+                    <LogOut size={15} strokeWidth={1.5} />
+                    Sign out
+                  </button>
+                </>
+              ) : (
+                <a href="/api/auth/google" className="account-action" onClick={onClose}>
+                  <LogIn size={15} strokeWidth={1.5} />
+                  Sign in with Google
+                </a>
+              )}
+            </div>
+          )}
         </motion.div>
       )}
     </AnimatePresence>

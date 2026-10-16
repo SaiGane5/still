@@ -271,6 +271,25 @@ describe("completed notes archive", () => {
     const leaked = await (await completed.GET(call(b, "GET", "/api/completed"))).json();
     expect(leaked.items.map((i: any) => i.id)).not.toContain(t.id);
   });
+
+  it("searches completed notes by title and content", async () => {
+    const c = await newClient();
+    const a = await add(c, "Write proposal");
+    const b = await add(c, "Buy groceries");
+    await notes.PUT(call(c, "PUT", `/api/tasks/${a.id}/notes`, { content: "include budget section", baseVersion: 0 }), ctx(a.id));
+    await notes.PUT(call(c, "PUT", `/api/tasks/${b.id}/notes`, { content: "milk and eggs", baseVersion: 0 }), ctx(b.id));
+    await complete.POST(call(c, "POST", `/api/tasks/${a.id}/complete`, {}), ctx(a.id));
+    await complete.POST(call(c, "POST", `/api/tasks/${b.id}/complete`, {}), ctx(b.id));
+
+    const byTitle = await (await completed.GET(call(c, "GET", "/api/completed?q=proposal"))).json();
+    expect(byTitle.items.map((i: any) => i.id)).toEqual([a.id]);
+
+    const byBody = await (await completed.GET(call(c, "GET", "/api/completed?q=budget"))).json();
+    expect(byBody.items.map((i: any) => i.id)).toEqual([a.id]);
+
+    const miss = await (await completed.GET(call(c, "GET", "/api/completed?q=xyzzy"))).json();
+    expect(miss.total).toBe(0);
+  });
 });
 
 describe("auth profile", () => {

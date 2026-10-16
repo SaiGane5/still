@@ -1,3 +1,4 @@
+import type { AssistantChat, AssistantChatSummary, AssistantMessage } from "@/lib/assistant";
 import { ConflictError } from "@/lib/noteSession";
 import type { AppState, CompletedNoteItem, Note, UserProfile } from "@/lib/types";
 
@@ -65,12 +66,24 @@ export const authApi = {
 };
 
 export const archiveApi = {
-  list: (opts: { limit?: number; offset?: number; all?: boolean } = {}) => {
+  list: (opts: { limit?: number; offset?: number; all?: boolean; q?: string } = {}) => {
     const q = new URLSearchParams();
     if (opts.limit != null) q.set("limit", String(opts.limit));
     if (opts.offset != null) q.set("offset", String(opts.offset));
     if (opts.all) q.set("all", "1");
+    if (opts.q?.trim()) q.set("q", opts.q.trim());
     const qs = q.toString();
     return request<{ items: CompletedNoteItem[]; total: number }>("GET", `/api/completed${qs ? `?${qs}` : ""}`);
   },
+};
+
+export const assistantApi = {
+  list: () => request<{ chats: AssistantChatSummary[] }>("GET", "/api/assistant/chats"),
+  create: () => request<AssistantChat>("POST", "/api/assistant/chats"),
+  get: (id: string) => request<AssistantChat>("GET", `/api/assistant/chats/${id}`),
+  remove: (id: string) => request<{ ok: boolean }>("DELETE", `/api/assistant/chats/${id}`),
+  send: (id: string, content: string) =>
+    request<AssistantMessage>("POST", `/api/assistant/chats/${id}/messages`, { content }),
+  confirm: (id: string, messageId: string) =>
+    request<{ state: AppState; count: number }>("POST", `/api/assistant/chats/${id}/confirm`, { messageId }),
 };

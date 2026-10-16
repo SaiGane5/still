@@ -244,12 +244,14 @@ export async function updateTimer(userId: string, tz: string, id: string, input:
   return withUserLock(userId, async (c) => {
     const t = await lockTask(c, userId, id);
     if (t.status !== "pending") return loadState(c, userId, tz, { alreadyCompleted: true }); // late sync after completion: ignore
-    if (input.remainingSeconds > t.planned_seconds) throw new HttpError(400, "invalid_request", "remainingSeconds exceeds planned duration");
+    // Extending after time’s up may push remaining above the original plan — grow the plan to match.
+    const planned = Math.max(t.planned_seconds, input.remainingSeconds);
     if (input.running && id !== (await headId(c, userId))) throw new HttpError(409, "not_active", "Only the active task can run");
     await c.query(
-      `UPDATE tasks SET remaining_seconds = $3, timer_running = $4 AND $3 > 0, timer_anchor_at = now(), updated_at = now()
+      `UPDATE tasks SET planned_duration_seconds = $3, remaining_seconds = $4, timer_running = $5 AND $4 > 0,
+         timer_anchor_at = now(), updated_at = now()
        WHERE id = $1 AND user_id = $2`,
-      [id, userId, input.remainingSeconds, input.running],
+      [id, userId, planned, input.remainingSeconds, input.running],
     );
     return loadState(c, userId, tz);
   });
@@ -266,21 +268,28 @@ export type CompletedNoteItem = {
 /** Completed tasks with their notes — the archive / “completed notes” folder. */
 export async function listCompletedWithNotes(
   userId: string,
-  opts: { limit?: number; offset?: number; notesOnly?: boolean } = {},
+  opts: { limit?: number; offset?: number; notesOnly?: boolean; query?: string } = {},
 ): Promise<{ items: CompletedNoteItem[]; total: number }> {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
   const offset = Math.max(opts.offset ?? 0, 0);
   const notesOnly = opts.notesOnly ?? true;
+  const q = opts.query?.trim().slice(0, 200) ?? "";
   const pool = getPool();
-  const filter = notesOnly
+  const params: unknown[] = [userId];
+  let filter = notesOnly
     ? `AND n.content IS NOT NULL AND length(trim(n.content)) > 0`
     : "";
+  if (q) {
+    params.push(`%${q.replace(/[%_\\]/g, "\\$&")}%`);
+    filter += ` AND (t.title ILIKE $${params.length} ESCAPE '\\' OR COALESCE(n.content, '') ILIKE $${params.length} ESCAPE '\\')`;
+  }
   const count = await pool.query(
     `SELECT count(*)::int AS n FROM tasks t
      LEFT JOIN task_notes n ON n.task_id = t.id
      WHERE t.user_id = $1 AND t.status = 'completed' ${filter}`,
-    [userId],
+    params,
   );
+  params.push(limit, offset);
   const { rows } = await pool.query(
     `SELECT t.id, t.title, t.completed_at,
             (n.content IS NOT NULL AND length(trim(n.content)) > 0) AS has_notes,
@@ -289,8 +298,8 @@ export async function listCompletedWithNotes(
      LEFT JOIN task_notes n ON n.task_id = t.id
      WHERE t.user_id = $1 AND t.status = 'completed' ${filter}
      ORDER BY t.completed_at DESC NULLS LAST
-     LIMIT $2 OFFSET $3`,
-    [userId, limit, offset],
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
   );
   return {
     total: count.rows[0].n,

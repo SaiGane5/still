@@ -8,9 +8,10 @@ import { UpcomingQueue } from "./UpcomingQueue";
 
 type Timer = { seconds: number; fraction: number; running: boolean; expired: boolean; toggle: () => void };
 
-export function FocusView({ state, timer, notesOpen, onComplete, onSkip, onNotes, onEdit, onDelete, onAdd, onMove }: {
+export function FocusView({ state, timer, notesOpen, onComplete, onSkip, onNotes, onEdit, onDelete, onAdd, onMove, onFullscreen }: {
   state: AppState; timer: Timer; notesOpen: boolean;
   onComplete: () => void; onSkip: () => void; onNotes: () => void; onEdit: (t: Task) => void; onDelete: (t: Task) => void; onAdd: () => void; onMove: (id: string, d: -1 | 1) => void;
+  onFullscreen?: () => void;
 }) {
   const reduce = useReducedMotion();
   const head = state.tasks[0];
@@ -26,7 +27,7 @@ export function FocusView({ state, timer, notesOpen, onComplete, onSkip, onNotes
               exit={reduce ? { opacity: 0 } : { opacity: 0, y: -16, filter: "blur(2px)" }} transition={{ duration: reduce ? 0 : 0.34, ease }}>
               <ActiveTask task={head} index={completedToday + 1} total={completedToday + state.tasks.length} canSkip={state.tasks.length > 1} notesOpen={notesOpen}
                 onComplete={onComplete} onSkip={onSkip} onNotes={onNotes} onEdit={() => onEdit(head)} onDelete={() => onDelete(head)} />
-              <FocusTimer {...timer} onToggle={timer.toggle} />
+              <FocusTimer {...timer} onToggle={timer.toggle} onFullscreen={onFullscreen} />
             </motion.section>
           ) : (
             <motion.section key="empty" className="composition composition--empty"

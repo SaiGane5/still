@@ -85,4 +85,31 @@ ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 CREATE INDEX IF NOT EXISTS idx_tasks_user_completed ON tasks (user_id, completed_at DESC) WHERE status = 'completed';
 `,
   },
+  {
+    name: "004_assistant_chats",
+    sql: `
+CREATE TABLE IF NOT EXISTS assistant_chats (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT 'New chat',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_assistant_chats_user ON assistant_chats (user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS assistant_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  chat_id UUID NOT NULL REFERENCES assistant_chats(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content TEXT NOT NULL DEFAULT '',
+  proposed_tasks JSONB,
+  queued BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_assistant_messages_chat ON assistant_messages (chat_id, created_at);
+
+DROP TRIGGER IF EXISTS assistant_chats_updated_at ON assistant_chats;
+CREATE TRIGGER assistant_chats_updated_at BEFORE UPDATE ON assistant_chats FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+`,
+  },
 ];

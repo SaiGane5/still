@@ -221,5 +221,21 @@ export function useStill(settings: Settings, readTimer: () => TimerReading) {
     [apply, enqueue],
   );
 
-  return { state, seed, loadError, toast, dismissToast: () => setToast(null), setToast, load, complete, skip, add, edit, remove, move };
+  return {
+    state,
+    seed,
+    loadError,
+    toast,
+    dismissToast: () => setToast(null),
+    setToast,
+    load,
+    /** Apply a full AppState from an external API (e.g. assistant queue confirm). */
+    applyRemote: apply,
+    complete,
+    skip,
+    add,
+    edit,
+    remove,
+    move,
+  };
 }

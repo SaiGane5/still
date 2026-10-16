@@ -1,11 +1,14 @@
 "use client";
-import { ArrowLeft, FileText } from "lucide-react";
+import { ArrowLeft, FileText, Search, X } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { ApiError, archiveApi, notesApi } from "@/client/api";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { ApiError, archiveApi } from "@/client/api";
+import { flushAllKeepalive, getNoteSession, hasUnsavedNotes } from "@/client/notesRegistry";
+import { useMediaQuery } from "@/client/useMediaQuery";
 import type { CompletedNoteItem } from "@/lib/types";
-import { NotesEditor } from "./NotesEditor";
 import { AccountMenu } from "./AccountMenu";
+import { NotesEditor } from "./NotesEditor";
+import { SaveStatus } from "./SaveStatus";
 
 function formatCompleted(iso: string) {
   if (!iso) return "";
@@ -21,22 +24,75 @@ function formatCompleted(iso: string) {
   }
 }
 
+function previewOf(content: string) {
+  return content.replace(/[\n\r]+/g, " ").trim().slice(0, 140);
+}
+
+function ArchiveNotePanel({
+  taskId,
+  title,
+  completedAt,
+  onPreview,
+}: {
+  taskId: string;
+  title: string;
+  completedAt: string;
+  onPreview: (taskId: string, preview: string) => void;
+}) {
+  const session = useMemo(() => getNoteSession(taskId), [taskId]);
+  const snap = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
+  const coarse = useMediaQuery("(pointer: coarse)");
+
+  useEffect(() => () => void session.flush(), [session]);
+
+  useEffect(() => {
+    if (!snap.loaded) return;
+    onPreview(taskId, previewOf(snap.content));
+  }, [snap.loaded, snap.content, taskId, onPreview]);
+
+  return (
+    <div className="notes-panel archive-note-panel">
+      <div className="notes-top">
+        <span className="meta">Notes</span>
+        <span className="grow" />
+        <SaveStatus status={snap.status} onRetry={() => void session.retry()} />
+        <span className="save-status archive-completed-at">{formatCompleted(completedAt)}</span>
+      </div>
+      <div className="notes-doc">
+        <h2 className="notes-title">{title}</h2>
+        <NotesEditor
+          value={snap.content}
+          onChange={(v) => session.setContent(v)}
+          readOnly={!snap.loaded}
+          autoFocus={!coarse && snap.loaded}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function ArchiveView() {
   const [items, setItems] = useState<CompletedNoteItem[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selected, setSelected] = useState<CompletedNoteItem | null>(null);
-  const [note, setNote] = useState("");
-  const [noteLoading, setNoteLoading] = useState(false);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(query.trim()), 220);
+    return () => clearTimeout(id);
+  }, [query]);
+
+  const load = useCallback(async (q: string) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await archiveApi.list({ limit: 100 });
+      const data = await archiveApi.list({ limit: 100, q: q || undefined });
       setItems(data.items);
       setTotal(data.total);
+      setSelected((cur) => (cur && data.items.some((i) => i.id === cur.id) ? cur : null));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Couldn’t load archive");
     } finally {
@@ -45,31 +101,46 @@ export function ArchiveView() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(debouncedQuery);
+  }, [load, debouncedQuery]);
 
   useEffect(() => {
-    if (!selected) {
-      setNote("");
-      return;
-    }
-    let cancelled = false;
-    setNoteLoading(true);
-    void notesApi
-      .load(selected.id)
-      .then((n) => {
-        if (!cancelled) setNote(n.content);
-      })
-      .catch(() => {
-        if (!cancelled) setNote("");
-      })
-      .finally(() => {
-        if (!cancelled) setNoteLoading(false);
-      });
-    return () => {
-      cancelled = true;
+    const onHide = () => flushAllKeepalive();
+    const onBefore = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedNotes()) {
+        flushAllKeepalive();
+        e.preventDefault();
+      }
     };
-  }, [selected]);
+    window.addEventListener("pagehide", onHide);
+    window.addEventListener("beforeunload", onBefore);
+    return () => {
+      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("beforeunload", onBefore);
+    };
+  }, []);
+
+  const onPreview = useCallback((taskId: string, preview: string) => {
+    setItems((list) =>
+      list.map((item) =>
+        item.id === taskId
+          ? { ...item, notePreview: preview, hasNotes: preview.length > 0 }
+          : item,
+      ),
+    );
+  }, []);
+
+  const selectItem = (item: CompletedNoteItem) => {
+    if (selected && selected.id !== item.id) {
+      void getNoteSession(selected.id).flush();
+    }
+    setSelected(item);
+  };
+
+  const searching = debouncedQuery.length > 0;
+  const emptyMessage = searching
+    ? `No notes match “${debouncedQuery}”.`
+    : "Notes from completed tasks will appear here.";
 
   return (
     <div className="shell archive-shell">
@@ -94,23 +165,43 @@ export function ArchiveView() {
                 <ArrowLeft size={15} strokeWidth={1.5} />
                 Focus
               </Link>
-              <span className="meta">{total ? `${total} note${total === 1 ? "" : "s"}` : "Archive"}</span>
+              <span className="meta">
+                {loading ? "Searching…" : total ? `${total} note${total === 1 ? "" : "s"}` : searching ? "No matches" : "Archive"}
+              </span>
             </div>
 
-            {loading ? (
+            <div className="archive-search">
+              <Search size={15} strokeWidth={1.5} aria-hidden className="archive-search-icon" />
+              <input
+                type="search"
+                className="archive-search-input"
+                placeholder="Search titles and notes"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                aria-label="Search completed notes"
+                autoComplete="off"
+              />
+              {query && (
+                <button type="button" className="icon-btn tiny" aria-label="Clear search" onClick={() => setQuery("")}>
+                  <X size={14} strokeWidth={1.5} />
+                </button>
+              )}
+            </div>
+
+            {loading && items.length === 0 ? (
               <p className="meta archive-empty">Loading…</p>
             ) : error ? (
               <div className="archive-empty" role="alert">
                 <p className="desc">{error}</p>
-                <button className="btn-primary" onClick={() => void load()}>
+                <button className="btn-primary" onClick={() => void load(debouncedQuery)}>
                   Try again
                 </button>
               </div>
             ) : items.length === 0 ? (
               <div className="archive-empty">
                 <FileText size={22} strokeWidth={1.25} className="muted" />
-                <p className="desc">Notes from completed tasks will appear here.</p>
-                <p className="muted">Finish a task with notes to start your archive.</p>
+                <p className="desc">{emptyMessage}</p>
+                {!searching && <p className="muted">Finish a task with notes to start your archive.</p>}
               </div>
             ) : (
               <ul className="archive-items">
@@ -120,7 +211,7 @@ export function ArchiveView() {
                       type="button"
                       className="archive-item"
                       data-active={selected?.id === item.id}
-                      onClick={() => setSelected(item)}
+                      onClick={() => selectItem(item)}
                     >
                       <span className="archive-item-title">{item.title}</span>
                       <span className="archive-item-date">{formatCompleted(item.completedAt)}</span>
@@ -135,24 +226,16 @@ export function ArchiveView() {
           <section className="archive-detail" aria-label="Note">
             {!selected ? (
               <div className="archive-empty archive-detail-empty">
-                <p className="muted">Select a completed task to read its notes.</p>
+                <p className="muted">Select a completed task to edit its notes.</p>
               </div>
             ) : (
-              <div className="notes-panel archive-note-panel">
-                <div className="notes-top">
-                  <span className="meta">Notes</span>
-                  <span className="grow" />
-                  <span className="save-status">{formatCompleted(selected.completedAt)}</span>
-                </div>
-                <div className="notes-doc">
-                  <h2 className="notes-title">{selected.title}</h2>
-                  {noteLoading ? (
-                    <p className="meta">Loading…</p>
-                  ) : (
-                    <NotesEditor value={note} onChange={() => {}} readOnly autoFocus={false} />
-                  )}
-                </div>
-              </div>
+              <ArchiveNotePanel
+                key={selected.id}
+                taskId={selected.id}
+                title={selected.title}
+                completedAt={selected.completedAt}
+                onPreview={onPreview}
+              />
             )}
           </section>
         </div>

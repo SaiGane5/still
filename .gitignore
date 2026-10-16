@@ -6,3 +6,8 @@ node_modules
 *.tsbuildinfo
 next-env.d.ts
 .next-dev.log
+
+# ffmpeg temp clips
+a1.wav
+a2.wav
+a3.wav

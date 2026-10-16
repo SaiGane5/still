@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">still</string>
+    <string name="title_activity_main">still</string>
+    <string name="package_name">app.still.focus</string>
+    <string name="custom_url_scheme">app.still.focus</string>
+</resources>
