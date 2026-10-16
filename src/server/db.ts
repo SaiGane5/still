@@ -44,7 +44,7 @@ export async function withTx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
  */
 export async function withUserLock<T>(userId: string, fn: (c: PoolClient) => Promise<T>): Promise<T> {
   return withTx(async (c) => {
-    const { rowCount } = await c.query("SELECT 1 FROM users WHERE id = $1 FOR UPDATE", [userId]);
+    const { rowCount } = await c.query("SELECT 1 FROM app_users WHERE id = $1 FOR UPDATE", [userId]);
     if (!rowCount) throw new Error("user not found");
     return fn(c);
   });

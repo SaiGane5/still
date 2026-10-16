@@ -10,7 +10,7 @@ import { HttpError } from "./http-error";
  * never trusted.
  *
  *  1. If AUTH_JWT_SECRET is set and the request carries `Authorization: Bearer <HS256 JWT>`,
- *     the token is verified and its `sub` claim is mapped to users.external_id.
+ *     the token is verified and its `sub` claim is mapped to app_users.auth_provider_id.
  *     Swap `verifyJwt` for your IdP's verifier (JWKS / RS256) when integrating a real provider.
  *  2. Otherwise a per-browser guest account is used, identified by an HMAC-signed,
  *     HttpOnly cookie. Each browser gets its own private user, so there is no shared
@@ -71,8 +71,8 @@ export async function authenticate(req: Request): Promise<AuthResult> {
     const claims = verifyJwt(bearer, jwtKey);
     if (!claims) throw new HttpError(401, "unauthorized", "Invalid or expired token");
     const { rows } = await pool.query(
-      `INSERT INTO users (external_id) VALUES ($1)
-       ON CONFLICT (external_id) DO UPDATE SET external_id = EXCLUDED.external_id
+      `INSERT INTO app_users (auth_provider_id) VALUES ($1)
+       ON CONFLICT (auth_provider_id) DO UPDATE SET auth_provider_id = EXCLUDED.auth_provider_id
        RETURNING id, (xmax = 0) AS inserted`,
       [claims.sub],
     );
@@ -83,11 +83,11 @@ export async function authenticate(req: Request): Promise<AuthResult> {
   if (raw) {
     const [id, sig] = raw.split(".");
     if (id && sig && UUID_RE.test(id) && safeEqual(sign(id), sig)) {
-      const { rowCount } = await pool.query("SELECT 1 FROM users WHERE id = $1", [id]);
+      const { rowCount } = await pool.query("SELECT 1 FROM app_users WHERE id = $1", [id]);
       if (rowCount) return { userId: id, isNew: false };
     }
   }
-  const { rows } = await pool.query("INSERT INTO users DEFAULT VALUES RETURNING id");
+  const { rows } = await pool.query("INSERT INTO app_users DEFAULT VALUES RETURNING id");
   const id: string = rows[0].id;
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
   return {

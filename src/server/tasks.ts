@@ -7,11 +7,12 @@ import { MAX_SECONDS, MIN_SECONDS, type AppState, type Task } from "@/lib/types"
 type Q = Pick<PoolClient, "query">;
 
 /** Remaining time right now, derived from the stored anchor (never trusts the client clock). */
+const REMAINING = "COALESCE(remaining_seconds, planned_duration_seconds)";
 const EFFECTIVE = `CASE WHEN timer_running
-  THEN GREATEST(0, remaining_seconds - FLOOR(EXTRACT(EPOCH FROM (now() - timer_anchor_at)))::int)
-  ELSE remaining_seconds END`;
+  THEN GREATEST(0, ${REMAINING} - FLOOR(EXTRACT(EPOCH FROM (now() - timer_anchor_at)))::int)
+  ELSE ${REMAINING} END`;
 
-const COLS = `id, title, description, planned_seconds, ${EFFECTIVE} AS remaining_seconds, status, position,
+const COLS = `id, title, COALESCE(description, '') AS description, planned_duration_seconds AS planned_seconds, ${EFFECTIVE} AS remaining_seconds, status, queue_position AS position,
   timer_running, created_at, updated_at, completed_at`;
 
 function toTask(r: any): Task {
@@ -53,12 +54,12 @@ export const parseId = (id: string) => {
 };
 
 export async function loadState(q: Q, userId: string, timezone = "UTC", extra: Partial<AppState> = {}): Promise<AppState> {
-  const tasks = await q.query(`SELECT ${COLS} FROM tasks WHERE user_id = $1 AND status = 'pending' ORDER BY position, created_at`, [userId]);
+  const tasks = await q.query(`SELECT ${COLS} FROM tasks WHERE user_id = $1 AND status = 'pending' ORDER BY queue_position, created_at`, [userId]);
   const prog = await q.query(
       `SELECT
          (SELECT count(*)::int FROM tasks WHERE user_id = $1 AND status = 'completed'
             AND (completed_at AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date) AS completed_today,
-         (SELECT COALESCE(sum(focused_seconds), 0)::int FROM focus_sessions WHERE user_id = $1 AND outcome = 'completed'
+         (SELECT COALESCE(sum(elapsed_seconds), 0)::int FROM focus_sessions WHERE user_id = $1 AND status = 'completed'
             AND (ended_at AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date) AS focused_today`,
       [userId, timezone],
   );
@@ -79,7 +80,7 @@ export const getState = (userId: string, tz: string) => loadState(getPool(), use
 
 async function headId(c: Q, userId: string): Promise<string | null> {
   const { rows } = await c.query(
-    "SELECT id FROM tasks WHERE user_id = $1 AND status = 'pending' ORDER BY position, created_at LIMIT 1",
+    "SELECT id FROM tasks WHERE user_id = $1 AND status = 'pending' ORDER BY queue_position, created_at LIMIT 1",
     [userId],
   );
   return rows[0]?.id ?? null;
@@ -105,7 +106,7 @@ async function settleHead(c: Q, userId: string, prevHead: string | null, startNe
     [userId, head],
   );
   await c.query(
-    `UPDATE tasks SET remaining_seconds = CASE WHEN remaining_seconds = 0 THEN planned_seconds ELSE remaining_seconds END,
+    `UPDATE tasks SET remaining_seconds = CASE WHEN ${REMAINING} = 0 THEN planned_duration_seconds ELSE ${REMAINING} END,
        timer_running = $2, timer_anchor_at = now(), updated_at = now() WHERE id = $1`,
     [head, startNext],
   );
@@ -113,7 +114,7 @@ async function settleHead(c: Q, userId: string, prevHead: string | null, startNe
 
 async function lockTask(c: Q, userId: string, id: string) {
   const { rows } = await c.query(
-    `SELECT id, status, planned_seconds, ${EFFECTIVE} AS effective, timer_running FROM tasks WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+    `SELECT id, status, planned_duration_seconds AS planned_seconds, ${EFFECTIVE} AS effective, timer_running FROM tasks WHERE id = $1 AND user_id = $2 FOR UPDATE`,
     [id, userId],
   );
   if (!rows[0]) throw new HttpError(404, "not_found", "Task not found");
@@ -123,20 +124,21 @@ async function lockTask(c: Q, userId: string, id: string) {
 async function record(c: Q, userId: string, t: { id: string; planned_seconds: number; effective: number }, outcome: string) {
   const focused = Math.max(0, t.planned_seconds - t.effective);
   await c.query(
-    `INSERT INTO focus_sessions (task_id, user_id, outcome, planned_seconds, focused_seconds) VALUES ($1,$2,$3,$4,$5)`,
-    [t.id, userId, outcome, t.planned_seconds, focused],
+    `INSERT INTO focus_sessions (task_id, user_id, status, planned_duration_seconds, elapsed_seconds, started_at, ended_at)
+     VALUES ($1,$2,$3,$4,$5, now() - make_interval(secs => $5::int), now())`,
+    [t.id, userId, outcome === "completed" ? "completed" : "interrupted", t.planned_seconds, focused],
   );
 }
 
 export async function createTask(userId: string, tz: string, input: z.infer<typeof createSchema>) {
   return withUserLock(userId, async (c) => {
     const { rows } = await c.query(
-      `SELECT COALESCE(max(position), -1) + 1 AS next, count(*)::int AS n FROM tasks WHERE user_id = $1 AND status = 'pending'`,
+      `SELECT COALESCE(max(queue_position), -1) + 1 AS next, count(*)::int AS n FROM tasks WHERE user_id = $1 AND status = 'pending'`,
       [userId],
     );
     const first = rows[0].n === 0;
     const { rows: created } = await c.query(
-      `INSERT INTO tasks (user_id, title, description, planned_seconds, remaining_seconds, position, timer_running)
+      `INSERT INTO tasks (user_id, title, description, planned_duration_seconds, remaining_seconds, queue_position, timer_running)
        VALUES ($1,$2,$3,$4,$4,$5,$6) RETURNING id`,
       [userId, input.title, input.description, input.plannedSeconds, rows[0].next, first],
     );
@@ -153,7 +155,7 @@ export async function updateTask(userId: string, tz: string, id: string, patch: 
     const remaining = Math.min(planned, Math.max(0, t.effective + (planned - t.planned_seconds)));
     await c.query(
       `UPDATE tasks SET title = COALESCE($3, title), description = COALESCE($4, description),
-         planned_seconds = $5, remaining_seconds = $6, timer_anchor_at = now(), updated_at = now()
+         planned_duration_seconds = $5, remaining_seconds = $6, timer_anchor_at = now(), updated_at = now()
        WHERE id = $1 AND user_id = $2`,
       [id, userId, patch.title ?? null, patch.description ?? null, planned, remaining],
     );
@@ -204,7 +206,7 @@ export async function skipTask(userId: string, tz: string, id: string, startNext
     await record(c, userId, t, "skipped");
     await c.query(
       `UPDATE tasks SET remaining_seconds = $3, timer_running = false, timer_anchor_at = now(), updated_at = now(),
-         position = (SELECT max(position) + 1 FROM tasks WHERE user_id = $2 AND status = 'pending') WHERE id = $1 AND user_id = $2`,
+         queue_position = (SELECT max(queue_position) + 1 FROM tasks WHERE user_id = $2 AND status = 'pending') WHERE id = $1 AND user_id = $2`,
       [id, userId, t.effective],
     );
     await settleHead(c, userId, id === prev ? null : prev, startNext);
@@ -224,7 +226,7 @@ export async function reorderTasks(userId: string, tz: string, orderedIds: strin
       throw new HttpError(409, "queue_changed", "The queue changed; please refresh", { state: await loadState(c, userId, tz) });
     }
     await c.query(
-      `UPDATE tasks t SET position = o.pos - 1, updated_at = now()
+      `UPDATE tasks t SET queue_position = o.pos - 1, updated_at = now()
        FROM unnest($2::uuid[]) WITH ORDINALITY AS o(id, pos) WHERE t.id = o.id AND t.user_id = $1`,
       [userId, orderedIds],
     );

@@ -14,7 +14,7 @@ async function assertOwned(taskId: string, userId: string) {
 }
 
 async function current(q: { query: Function }, taskId: string, userId: string): Promise<Note> {
-  const { rows } = await q.query("SELECT content, version FROM notes WHERE task_id = $1 AND user_id = $2", [taskId, userId]);
+  const { rows } = await q.query("SELECT n.content, n.version FROM task_notes n JOIN tasks t ON t.id = n.task_id WHERE n.task_id = $1 AND t.user_id = $2", [taskId, userId]);
   return { taskId, content: rows[0]?.content ?? "", version: rows[0]?.version ?? 0 };
 }
 
@@ -34,15 +34,15 @@ export async function saveNote(userId: string, taskId: string, content: string, 
     let rows;
     if (baseVersion === 0) {
       ({ rows } = await c.query(
-        `INSERT INTO notes (task_id, user_id, content, version) VALUES ($1,$2,$3,1)
+        `INSERT INTO task_notes (task_id, content, version) VALUES ($1,$2,1)
          ON CONFLICT (task_id) DO NOTHING RETURNING version`,
-        [taskId, userId, content],
+        [taskId, content],
       ));
     } else {
       ({ rows } = await c.query(
-        `UPDATE notes SET content = $3, version = version + 1, updated_at = now()
-         WHERE task_id = $1 AND user_id = $2 AND version = $4 RETURNING version`,
-        [taskId, userId, content, baseVersion],
+        `UPDATE task_notes SET content = $2, version = version + 1
+         WHERE task_id = $1 AND version = $3 RETURNING version`,
+        [taskId, content, baseVersion],
       ));
     }
     if (rows[0]) return { taskId, content, version: rows[0].version as number };

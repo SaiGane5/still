@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { authenticate } from "./auth";
 import { HttpError } from "./http-error";
+import { ensureSchema } from "./migrate";
 import { seedDemoTasks } from "./seed";
 
 export type Ctx = { userId: string; req: Request; timezone: string };
@@ -33,6 +34,7 @@ export function route(fn: (ctx: Ctx) => Promise<unknown>) {
   return async (req: Request): Promise<Response> => {
     try {
       if (req.method !== "GET" && !sameOrigin(req)) throw new HttpError(403, "forbidden", "Cross-origin request blocked");
+      await ensureSchema();
       const auth = await authenticate(req);
       if (auth.isNew && process.env.STILL_SEED_DEMO === "1") await seedDemoTasks(auth.userId);
       const body = await fn({ userId: auth.userId, req, timezone: timezoneOf(req) });
@@ -62,6 +64,11 @@ export function errorResponse(err: unknown): Response {
   }
   if (err instanceof SyntaxError) {
     return NextResponse.json({ error: { code: "invalid_json", message: "Malformed JSON body" } }, { status: 400, headers });
+  }
+  const msg = err instanceof Error ? err.message : "";
+  if (/^(AUTH_SECRET|DATABASE_URL)\b/.test(msg)) {
+    console.error("configuration error:", msg);
+    return NextResponse.json({ error: { code: "misconfigured", message: msg } }, { status: 500, headers });
   }
   console.error("unhandled route error", err);
   return NextResponse.json({ error: { code: "internal", message: "Something went wrong" } }, { status: 500, headers });

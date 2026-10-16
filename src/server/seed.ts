@@ -16,7 +16,7 @@ export async function seedDemoTasks(userId: string) {
     for (const [i, t] of DEMO_TASKS.entries()) {
       const s = t.minutes * 60;
       await c.query(
-        `INSERT INTO tasks (user_id, title, description, planned_seconds, remaining_seconds, position, timer_running)
+        `INSERT INTO tasks (user_id, title, description, planned_duration_seconds, remaining_seconds, queue_position, timer_running)
          VALUES ($1,$2,$3,$4,$4,$5,$6)`,
         [userId, t.title, t.description, s, i, i === 0],
       );

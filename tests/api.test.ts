@@ -111,8 +111,8 @@ describe("queue and task advancement", () => {
     expect(s.tasks[0]).toMatchObject({ title: "two", plannedSeconds: 900, remainingSeconds: 900, timerRunning: true });
     expect(s.progress.completedToday).toBe(1);
 
-    const { rows } = await getPool().query("SELECT outcome FROM focus_sessions WHERE task_id = $1", [first.id]);
-    expect(rows).toEqual([{ outcome: "completed" }]); // exactly one session despite duplicate requests
+    const { rows } = await getPool().query("SELECT status, elapsed_seconds FROM focus_sessions WHERE task_id = $1", [first.id]);
+    expect(rows).toMatchObject([{ status: "completed" }]); // exactly one session despite duplicate requests
   });
 
   it("completing the last task leaves an empty queue and a daily count", async () => {
@@ -156,7 +156,7 @@ describe("queue and task advancement", () => {
     const n = await (await notes.GET(call(c, "GET", `/api/tasks/${a.id}/notes`), ctx(a.id))).json();
     expect(n.content).toBe("kept");
     await task.DELETE(call(c, "DELETE", `/api/tasks/${a.id}`), ctx(a.id));
-    const { rowCount } = await getPool().query("SELECT 1 FROM notes WHERE task_id = $1", [a.id]);
+    const { rowCount } = await getPool().query("SELECT 1 FROM task_notes WHERE task_id = $1", [a.id]);
     expect(rowCount).toBe(0);
   });
 });
@@ -201,7 +201,7 @@ describe("notes versioning", () => {
       notes.PUT(call(c, "PUT", `/api/tasks/${a.id}/notes`, { content, baseVersion }), ctx(a.id));
     expect(await (await put("v1", 0)).json()).toMatchObject({ version: 1 });
     expect(await (await put("v2", 1)).json()).toMatchObject({ version: 2, content: "v2" });
-    const { rows } = await getPool().query("SELECT count(*)::int AS n FROM notes WHERE task_id = $1", [a.id]);
+    const { rows } = await getPool().query("SELECT count(*)::int AS n FROM task_notes WHERE task_id = $1", [a.id]);
     expect(rows[0].n).toBe(1);
   });
 
