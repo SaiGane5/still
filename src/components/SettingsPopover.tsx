@@ -108,51 +108,53 @@ export function SettingsPopover({
           </label>
           <p className="muted settings-hint">Alarm and notification only when the timer reaches zero.</p>
 
-          {loaded && (user?.signedIn || googleEnabled) && (
-            <div className="settings-account">
-              {user?.signedIn ? (
-                <>
-                  <div className="settings-account-identity">
-                    {user.avatarUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={user.avatarUrl} alt="" className="settings-avatar" referrerPolicy="no-referrer" />
-                    ) : (
-                      <span className="settings-avatar settings-avatar-fallback">
-                        {(user.displayName || user.email || "S").trim().charAt(0).toUpperCase()}
-                      </span>
-                    )}
-                    <div>
-                      <p className="account-name">{user.displayName || user.email || "Signed in"}</p>
-                      {user.email && user.displayName && <p className="muted account-email">{user.email}</p>}
-                    </div>
+          <div className="settings-account">
+            {!loaded ? (
+              <p className="muted settings-hint">Checking account…</p>
+            ) : user?.signedIn ? (
+              <>
+                <div className="settings-account-identity">
+                  {user.avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={user.avatarUrl} alt="" className="settings-avatar" referrerPolicy="no-referrer" />
+                  ) : (
+                    <span className="settings-avatar settings-avatar-fallback">
+                      {(user.displayName || user.email || "S").trim().charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                  <div>
+                    <p className="account-name">{user.displayName || user.email || "Signed in"}</p>
+                    {user.email && user.displayName && <p className="muted account-email">{user.email}</p>}
                   </div>
-                  <button
-                    type="button"
-                    className="account-action"
-                    onClick={() => {
-                      onClose();
-                      void logout();
-                    }}
-                  >
-                    <LogOut size={15} strokeWidth={1.5} />
-                    Sign out
-                  </button>
-                </>
-              ) : (
+                </div>
                 <button
                   type="button"
                   className="account-action"
                   onClick={() => {
                     onClose();
-                    void startGoogleSignIn();
+                    void logout();
                   }}
                 >
-                  <LogIn size={15} strokeWidth={1.5} />
-                  Sign in with Google
+                  <LogOut size={15} strokeWidth={1.5} />
+                  Sign out
                 </button>
-              )}
-            </div>
-          )}
+              </>
+            ) : googleEnabled ? (
+              <button
+                type="button"
+                className="account-action"
+                onClick={() => {
+                  onClose();
+                  void startGoogleSignIn();
+                }}
+              >
+                <LogIn size={15} strokeWidth={1.5} />
+                Sign in with Google
+              </button>
+            ) : (
+              <p className="muted settings-hint">Google sign-in isn’t available right now.</p>
+            )}
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

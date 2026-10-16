@@ -16,18 +16,33 @@ const tz = () => {
   }
 };
 
+/** Bound hung API calls so the UI can show an error instead of spinning forever. */
+const DEFAULT_TIMEOUT_MS = 20_000;
+
 async function request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
   let res: Response;
+  const { signal: outerSignal, ...rest } = init;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
+  const onOuterAbort = () => ctrl.abort();
+  outerSignal?.addEventListener("abort", onOuterAbort);
   try {
     res = await fetch(path, {
       method,
       credentials: "same-origin",
       headers: { "content-type": "application/json", "x-timezone": tz() },
       body: body === undefined ? undefined : JSON.stringify(body),
-      ...init,
+      ...rest,
+      signal: ctrl.signal,
     });
-  } catch {
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new ApiError(0, "timeout", "Request timed out — try again");
+    }
     throw new ApiError(0, "network", "You appear to be offline");
+  } finally {
+    clearTimeout(timer);
+    outerSignal?.removeEventListener("abort", onOuterAbort);
   }
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, data?.error?.code ?? "error", data?.error?.message ?? "Request failed", data?.error);

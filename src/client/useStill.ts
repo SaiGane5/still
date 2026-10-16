@@ -31,7 +31,12 @@ export function useSettings() {
   return [settings, update] as const;
 }
 
-const messageOf = (e: unknown) => (e instanceof ApiError ? (e.status === 0 ? "You appear to be offline." : e.message) : "Something went wrong.");
+const messageOf = (e: unknown) => {
+  if (!(e instanceof ApiError)) return "Something went wrong.";
+  if (e.code === "timeout") return "The server took too long to respond.";
+  if (e.status === 0) return "You appear to be offline.";
+  return e.message;
+};
 
 let seedCounter = 0;
 const seedFor = (s: AppState): Seed => ({

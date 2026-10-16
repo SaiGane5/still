@@ -29,8 +29,6 @@ export function AccountMenu() {
     };
   }, [open]);
 
-  if (!loaded) return null;
-
   if (!user?.signedIn) {
     return (
       <div className="account-slot">
@@ -38,8 +36,8 @@ export function AccountMenu() {
           <FolderOpen size={15} strokeWidth={1.5} />
           <span className="account-link-label">Archive</span>
         </Link>
-        {googleEnabled && (
-          <a href="/api/auth/google" className="text-btn account-link">
+        {(!loaded || googleEnabled) && (
+          <a href="/api/auth/google" className="text-btn account-link" aria-disabled={!loaded || !googleEnabled}>
             Sign in
           </a>
         )}
